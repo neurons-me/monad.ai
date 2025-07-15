@@ -1,0 +1,12 @@
+node_modules/
+.env
+# Added by cargo
+/target
+# Node.js
+node_modules/
+# Environment
+.env
+# Cargo specific
+/target
+**/*.rs.bk
+Cargo.lock

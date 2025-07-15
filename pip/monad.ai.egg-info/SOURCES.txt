@@ -1,0 +1,6 @@
+README.md
+setup.py
+monad.ai.egg-info/PKG-INFO
+monad.ai.egg-info/SOURCES.txt
+monad.ai.egg-info/dependency_links.txt
+monad.ai.egg-info/top_level.txt
