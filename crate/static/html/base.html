@@ -3,11 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>monad.ai</title>
+  <title>{% block title %}monad.ai{% endblock title %}</title>
 <link rel="stylesheet" href="/html/styles/main.css">
 </head>
-<body class="center-screen">
-  <div class="neurons-link"></div>
-  <h1>monad.ai</h1>
+<body>
+  {% include "components/menu.html" %}
+  <main>
+    {% block content %}{% endblock content %}
+  </main>
 </body>
 </html>

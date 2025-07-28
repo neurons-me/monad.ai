@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+
+{% block title %}monad.ai JSON Response{% endblock title %}
+
+{% block content %}
+  <h1>monad.ai JSON Response</h1>
+  <pre>{{ json_data | json_encode(pretty=true) }}</pre>
+{% endblock content %}

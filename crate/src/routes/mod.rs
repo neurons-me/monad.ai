@@ -2,3 +2,4 @@
 pub mod graphql;
 pub mod rest;
 pub mod router;
+pub mod ws;

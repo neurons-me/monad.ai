@@ -1,5 +1,6 @@
 // src/utils/logger.rs en monad-ai
 use env_logger::{Builder, Env};
+#[cfg(debug_assertions)]
 use std::io::Write;
 
 pub fn init() {

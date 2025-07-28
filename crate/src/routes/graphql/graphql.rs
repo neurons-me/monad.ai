@@ -1,16 +1,23 @@
 //src/routes/graphql/graphql.rs
 use std::sync::Arc;
-use async_graphql::{Schema, EmptyMutation, EmptySubscription};
+use actix_web::web;
+use async_graphql::{Schema, EmptySubscription};
 use async_graphql_actix_web::{GraphQLRequest, GraphQLResponse};
-use crate::routes::graphql::QueryRoot;
+use crate::routes::graphql::{QueryRoot, MutationRoot};
+use crate::state::AppState; // importa AppState
 
-pub fn create_schema() -> Arc<Schema<QueryRoot, EmptyMutation, EmptySubscription>> {
-    Arc::new(Schema::build(QueryRoot, EmptyMutation, EmptySubscription).finish())
+pub fn create_schema(app_state: Arc<AppState>) -> Arc<Schema<QueryRoot, MutationRoot, EmptySubscription>> {
+    Arc::new(
+        Schema::build(QueryRoot, MutationRoot, EmptySubscription)
+            // Inyecta AppState en el contexto GraphQL para queries/mutaciones
+            .data(app_state)
+            .finish()
+    )
 }
 
 pub async fn graphql_handler(
-    schema: Arc<Schema<QueryRoot, EmptyMutation, EmptySubscription>>,
+    schema: web::Data<Arc<Schema<QueryRoot, MutationRoot, EmptySubscription>>>,
     req: GraphQLRequest,
 ) -> GraphQLResponse {
-    GraphQLResponse::from(schema.execute(req.into_inner()).await)
+    schema.execute(req.into_inner()).await.into()
 }

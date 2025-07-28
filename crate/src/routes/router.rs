@@ -1,13 +1,19 @@
-// src/router.rs
+// src/routes/router.rs
 use actix_web::web::{self, ServiceConfig};
 use actix_web::guard;
 use crate::routes::{rest, graphql};
-// Main server setup to attach all routes at once.
+use crate::routes::ws::me_ws::me_ws_handler; // ✅ Import the handler
+use crate::state::AppState;
+use std::sync::Arc;
+
 pub fn config(cfg: &mut ServiceConfig) {
-    let schema = graphql::create_schema(); // Create a shared GraphQL schema instance
+    // Crea el AppState e inyecta al schema
+    let app_state = Arc::new(AppState::default());
+    let schema = web::Data::new(graphql::create_schema(app_state));
+
     // --- GraphQL Routes --- 
     cfg.service(
-        web::resource("/graphql") // Route to handle GraphQL POST requests
+        web::resource("/graphql")
             .guard(guard::Post())
             .to({
                 let schema = schema.clone();
@@ -16,13 +22,19 @@ pub fn config(cfg: &mut ServiceConfig) {
     );
 
     cfg.service(
-        web::resource("/playground") // Route to serve the GraphQL Playground UI (a browser IDE for GraphQL)
+        web::resource("/playground")
             .route(web::get().to(graphql::playground_handler))
     );
 
     // --- REST Routes ---
-    // Service to expose a basic REST status check
-    
-    cfg.service(rest::status); //. GET /status
-    cfg.service(rest::request_history_logs); //. GET /request_history_logs
+    cfg.service(rest::status);
+    cfg.service(rest::request_history_logs);
+
+    // --- this.me Routes ---
+    cfg.service(rest::list_us);
+
+    // --- WebSocket Routes ---
+    cfg.service(
+        web::resource("/ws/me").route(web::get().to(me_ws_handler)) // ✅ Properly register WebSocket
+    );
 }
