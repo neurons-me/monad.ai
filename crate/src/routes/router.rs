@@ -2,14 +2,11 @@
 use actix_web::web::{self, ServiceConfig};
 use actix_web::guard;
 use crate::routes::{rest, graphql};
-use crate::routes::ws::me_ws::me_ws_handler; // ✅ Import the handler
-use crate::state::AppState;
-use std::sync::Arc;
+use crate::routes::ws::me_ws::me_ws_handler; 
 
 pub fn config(cfg: &mut ServiceConfig) {
     // Crea el AppState e inyecta al schema
-    let app_state = Arc::new(AppState::default());
-    let schema = web::Data::new(graphql::create_schema(app_state));
+    let schema = web::Data::new(graphql::create_schema());
 
     // --- GraphQL Routes --- 
     cfg.service(

@@ -4,13 +4,10 @@ use actix_web::web;
 use async_graphql::{Schema, EmptySubscription};
 use async_graphql_actix_web::{GraphQLRequest, GraphQLResponse};
 use crate::routes::graphql::{QueryRoot, MutationRoot};
-use crate::state::AppState; // importa AppState
 
-pub fn create_schema(app_state: Arc<AppState>) -> Arc<Schema<QueryRoot, MutationRoot, EmptySubscription>> {
+pub fn create_schema() -> Arc<Schema<QueryRoot, MutationRoot, EmptySubscription>> {
     Arc::new(
         Schema::build(QueryRoot, MutationRoot, EmptySubscription)
-            // Inyecta AppState en el contexto GraphQL para queries/mutaciones
-            .data(app_state)
             .finish()
     )
 }

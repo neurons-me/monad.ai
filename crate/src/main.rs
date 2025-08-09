@@ -2,7 +2,6 @@
 mod routes; 
 mod daemon;
 mod utils;
-mod state;
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {

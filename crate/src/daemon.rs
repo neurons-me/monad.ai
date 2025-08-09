@@ -1,9 +1,7 @@
-//monai.ai/crate/src/daemon.rs
+//monad.ai/crate/src/daemon.rs
 // This file is part of monad.ai, a project for building AI applications.
 use std::env;
-use crate::state::AppState;
 use actix_web::{App, HttpServer, web};
-use std::sync::Arc;
 use crate::routes::router;
 use crate::routes::graphql; // Import for GraphQL schema
 // Import this.env middleware for actix
@@ -37,17 +35,12 @@ let mw_config = ThisEnvMiddlewareConfig {
     ..Default::default()
 };
 
-// ✅ Usamos un único AppState compartido
-let app_state = Arc::new(AppState::default());
-let schema = web::Data::new(graphql::create_schema(app_state.clone()));
-let app_state_web = web::Data::new(app_state.clone());
-
+let schema = web::Data::new(graphql::create_schema());
 println!("⊙ Starting monad.ai ({}) at http://localhost:{}...", instance, port);
 HttpServer::new(move || {
     let mw_config_clone = mw_config.clone();
     App::new()
         .app_data(schema.clone())        // GraphQL usa el mismo AppState
-        .app_data(app_state_web.clone()) // Actix también usa el mismo AppState
         .wrap(cors_permissive())
         .wrap(ThisEnvMiddleware::new(mw_config_clone))
         .configure(router::config)
