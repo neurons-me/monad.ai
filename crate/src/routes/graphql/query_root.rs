@@ -34,11 +34,11 @@ struct GetFilter {
 // Root of all GraphQL queries. Each method inside `impl QueryRoot`
 // represents a query that clients can execute.
 pub struct QueryRoot;
-// Represents a simplified identity, including only its alias.
+// Represents a simplified identity, including only its username.
 #[derive(SimpleObject)]
 #[graphql(name = "Identity")]
 pub struct Identity {
-    pub alias: String,
+    pub username: String,
 }
 // Implementation of all queries exposed in the GraphQL schema.
 #[Object]
@@ -50,15 +50,15 @@ impl QueryRoot {
             .unwrap_or_default()
             .into_iter()
             .map(|m| Identity {
-                alias: m.alias,
+                username: m.username,
             })
             .collect()
     }
 
 
-    async fn public_info(&self, alias: String) -> Option<PublicInfo> {
-        match this_me::manager::load_public(&alias) {
-            Ok((alias, public_key)) => Some(PublicInfo { alias, public_key }),
+    async fn public_info(&self, username: String) -> Option<PublicInfo> {
+        match this_me::manager::load_public(&username) {
+            Ok((username, public_key)) => Some(PublicInfo { username, public_key }),
             Err(_) => None,
         }
     }
@@ -69,7 +69,7 @@ impl QueryRoot {
     /// It supports advanced filtering to narrow results based on key/value pairs, time ranges, and pagination.
     ///
     /// ### Arguments:
-    /// - `alias`: The alias of the identity to query.
+    /// - `username`: The username of the identity to query.
     /// - `password`: The password used to decrypt the identity's database.
     /// - `filter`: An object allowing for fine-grained query control. Includes:
     ///   - `verb`: Required. The verb table to search within (e.g. `"be"`, `"have"`, `"react"`, or `"all"`).
@@ -77,7 +77,7 @@ impl QueryRoot {
     ///   - `value`: Optional. Only return entries matching this value. Supports:
     ///     - `like:value` to match partial values (SQL LIKE)
     ///     - `json:key=value` to filter inside JSON values.
-    ///   - `context_id`: Optional. Scopes the query to a specific context (e.g., derived from alias, peer, domain).
+    ///   - `context_id`: Optional. Scopes the query to a specific context (e.g., derived from username, peer, domain).
     ///   - `limit`: Optional. Max number of results per verb. Defaults to 100.
     ///   - `offset`: Optional. Skips a number of entries for pagination.
     ///   - `since`: Optional. Only return entries after this RFC3339 timestamp.
@@ -88,8 +88,8 @@ impl QueryRoot {
     /// - `verb`, `key`, `value`, `timestamp`
     ///
     /// If `verb` is `"all"`, entries from all verb tables will be returned (up to `limit` per table).
-    async fn get(&self, alias: String, password: String, filter: GetFilter) -> Vec<GqlEntry> {
-        if let Ok(me) = Me::load(&alias, &password) {
+    async fn get(&self, username: String, password: String, filter: GetFilter) -> Vec<GqlEntry> {
+        if let Ok(me) = Me::load(&username, &password) {
             match me.get(
                 &filter.verb,
                 filter.context_id.as_deref(),
@@ -120,11 +120,11 @@ impl QueryRoot {
     }
 }
 // Represents the detailed public information of a `Me` instance,
-// currently exposing only alias and public key.
+// currently exposing only username and public key.
 #[derive(SimpleObject)]
 #[graphql(name = "PublicInfo")]
 pub struct PublicInfo {
-    pub alias: String,
+    pub username: String,
     pub public_key: String,
 }
 // Represents the daemon status, including whether it is active, its port, and the daemon version.

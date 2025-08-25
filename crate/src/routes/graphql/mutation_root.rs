@@ -9,8 +9,8 @@ struct MeMutator {
 }
 
 impl MeMutator {
-    fn new(alias: &str, hash: &str) -> Option<Self> {
-        if let Ok(me) = Me::load(alias, hash) {
+    fn new(username: &str, hash: &str) -> Option<Self> {
+        if let Ok(me) = Me::load(username, hash) {
             Some(Self { inner: me })
         } else {
             None
@@ -66,9 +66,9 @@ impl MeMutator {
 
 #[Object]
 impl MutationRoot {
-    async fn be(&self, _ctx: &Context<'_>, alias: String, password: String, key: String, value: String, context_id: Option<String>) -> bool {
-        println!("🔁 GraphQL be() called with: alias='{}', key='{}', value='{}'", alias, key, value);
-        match MeMutator::new(&alias, &password) {
+    async fn be(&self, _ctx: &Context<'_>, username: String, password: String, key: String, value: String, context_id: Option<String>) -> bool {
+        println!("🔁 GraphQL be() called with: username='{}', key='{}', value='{}'", username, key, value);
+        match MeMutator::new(&username, &password) {
             Some(mut me) => {
                 let result = me.be(&key, &value, context_id.as_deref());
                 if let Err(err) = &result {
@@ -78,33 +78,33 @@ impl MutationRoot {
                 result.is_ok()
             },
             None => {
-                println!("❌ GraphQL BE error: Failed to initialize identity '{}'", alias);
+                println!("❌ GraphQL BE error: Failed to initialize identity '{}'", username);
                 false
             }
         }
     }
 
-    async fn have(&self, _ctx: &Context<'_>, alias: String, password: String, key: String, value: String, context_id: Option<String>) -> bool {
-        MeMutator::new(&alias, &password).map(|mut me| me.have(&key, &value, context_id.as_deref())).unwrap_or(false)
+    async fn have(&self, _ctx: &Context<'_>, username: String, password: String, key: String, value: String, context_id: Option<String>) -> bool {
+        MeMutator::new(&username, &password).map(|mut me| me.have(&key, &value, context_id.as_deref())).unwrap_or(false)
     }
 
-    async fn do_(&self, _ctx: &Context<'_>, alias: String, password: String, key: String, value: String, context_id: Option<String>) -> bool {
-        MeMutator::new(&alias, &password).map(|mut me| me.do_(&key, &value, context_id.as_deref())).unwrap_or(false)
+    async fn do_(&self, _ctx: &Context<'_>, username: String, password: String, key: String, value: String, context_id: Option<String>) -> bool {
+        MeMutator::new(&username, &password).map(|mut me| me.do_(&key, &value, context_id.as_deref())).unwrap_or(false)
     }
 
-    async fn at(&self, _ctx: &Context<'_>, alias: String, password: String, key: String, value: String, context_id: Option<String>) -> bool {
-        MeMutator::new(&alias, &password).map(|mut me| me.at(&key, &value, context_id.as_deref())).unwrap_or(false)
+    async fn at(&self, _ctx: &Context<'_>, username: String, password: String, key: String, value: String, context_id: Option<String>) -> bool {
+        MeMutator::new(&username, &password).map(|mut me| me.at(&key, &value, context_id.as_deref())).unwrap_or(false)
     }
 
-    async fn relate(&self, _ctx: &Context<'_>, alias: String, password: String, key: String, value: String, context_id: Option<String>) -> bool {
-        MeMutator::new(&alias, &password).map(|mut me| me.relate(&key, &value, context_id.as_deref())).unwrap_or(false)
+    async fn relate(&self, _ctx: &Context<'_>, username: String, password: String, key: String, value: String, context_id: Option<String>) -> bool {
+        MeMutator::new(&username, &password).map(|mut me| me.relate(&key, &value, context_id.as_deref())).unwrap_or(false)
     }
 
-    async fn react(&self, _ctx: &Context<'_>, alias: String, password: String, key: String, value: String, context_id: Option<String>) -> bool {
-        MeMutator::new(&alias, &password).map(|mut me| me.react(&key, &value, context_id.as_deref())).unwrap_or(false)
+    async fn react(&self, _ctx: &Context<'_>, username: String, password: String, key: String, value: String, context_id: Option<String>) -> bool {
+        MeMutator::new(&username, &password).map(|mut me| me.react(&key, &value, context_id.as_deref())).unwrap_or(false)
     }
 
-    async fn communicate(&self, _ctx: &Context<'_>, alias: String, password: String, key: String, value: String, context_id: Option<String>) -> bool {
-        MeMutator::new(&alias, &password).map(|mut me| me.communicate(&key, &value, context_id.as_deref())).unwrap_or(false)
+    async fn communicate(&self, _ctx: &Context<'_>, username: String, password: String, key: String, value: String, context_id: Option<String>) -> bool {
+        MeMutator::new(&username, &password).map(|mut me| me.communicate(&key, &value, context_id.as_deref())).unwrap_or(false)
     }
 }

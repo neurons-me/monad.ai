@@ -16,7 +16,7 @@ pub async fn list_us() -> impl Responder {
             } else {
                 HttpResponse::Ok().json(json!({
                     "status": "ok",
-                    "identities": identities.into_iter().map(|m| m.alias).collect::<Vec<_>>()
+                    "identities": identities.into_iter().map(|m| m.username).collect::<Vec<_>>()
                 }))
             }
         }
