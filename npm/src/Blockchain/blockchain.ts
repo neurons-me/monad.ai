@@ -90,17 +90,17 @@ export function appendBlock(block: any) {
 // Read Blocks
 // -----------------------------------------------------------------------------
 export function getAllBlocks() {
-  return db.prepare("SELECT * FROM blocks ORDER BY id ASC").all();
+  return db.prepare("SELECT rowid AS _rowid, * FROM blocks ORDER BY rowid ASC").all();
 }
 
 export function getBlocksForIdentity(identityHash: string) {
   return db.prepare(`
-    SELECT * FROM blocks WHERE identityHash = ? ORDER BY id ASC
+    SELECT rowid AS _rowid, * FROM blocks WHERE identityHash = ? ORDER BY rowid ASC
   `).all(identityHash);
 }
 
 export function getBlocksForNamespace(namespace: string) {
   return db.prepare(`
-    SELECT * FROM blocks WHERE namespace = ? ORDER BY id ASC
+    SELECT rowid AS _rowid, * FROM blocks WHERE namespace = ? ORDER BY rowid ASC
   `).all(namespace);
 }

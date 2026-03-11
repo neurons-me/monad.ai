@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import os from "os";
 import { db, DB_PATH } from "./src/Blockchain/db";
 import { appendBlock, getAllBlocks } from "./src/Blockchain/blockchain";
 import { getAllUsers } from "./src/Blockchain/users";
@@ -19,6 +20,8 @@ import { createLegacyRouter } from "./src/http/legacy";
 import { GUI_PKG_DIST_DIR, htmlShell, wantsHtml } from "./src/http/shell";
 
 const PORT = process.env.PORT || 8161;
+const NODE_HOSTNAME = os.hostname();
+const NODE_DISPLAY_NAME = `${NODE_HOSTNAME}:${PORT}`;
 const app = express();
 app.set("trust proxy", true);
 app.use(cors());
@@ -33,7 +36,13 @@ app.get("/__bootstrap", (req, res) => {
   const host = resolveHostNamespace(req);
   const origin = `${req.protocol}://${host}`;
   const target = normalizeHttpRequestToMeTarget(req);
-  return res.json(createEnvelope(target, { host, namespace, apiOrigin: origin }));
+  return res.json(createEnvelope(target, {
+    host,
+    namespace,
+    apiOrigin: origin,
+    resolverHostName: NODE_HOSTNAME,
+    resolverDisplayName: NODE_DISPLAY_NAME,
+  }));
 });
 
 // HTML shell for root and any deep route when Accept: text/html
