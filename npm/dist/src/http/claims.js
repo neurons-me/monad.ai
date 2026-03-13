@@ -5,10 +5,65 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createClaimsRouter = createClaimsRouter;
 const express_1 = __importDefault(require("express"));
+const crypto_1 = __importDefault(require("crypto"));
 const records_1 = require("../claim/records");
 const replay_1 = require("../claim/replay");
 const meTarget_1 = require("./meTarget");
 const envelope_1 = require("./envelope");
+function toStableJson(value) {
+    if (value === null || typeof value !== "object") {
+        return JSON.stringify(value);
+    }
+    if (Array.isArray(value)) {
+        return `[${value.map((item) => toStableJson(item)).join(",")}]`;
+    }
+    const obj = value;
+    const keys = Object.keys(obj).sort();
+    const entries = keys.map((key) => `${JSON.stringify(key)}:${toStableJson(obj[key])}`);
+    return `{${entries.join(",")}}`;
+}
+function computeProofId(input) {
+    return crypto_1.default
+        .createHash("sha256")
+        .update(toStableJson(input))
+        .digest("hex");
+}
+function parseNamespaceIdentity(namespace) {
+    const ns = String(namespace || "").trim().toLowerCase();
+    if (!ns) {
+        return {
+            host: "unknown",
+            username: "",
+            effective: "unclaimed",
+        };
+    }
+    const userMatch = ns.match(/^([^\/]+)\/users\/([^\/]+)$/i);
+    if (userMatch) {
+        const host = String(userMatch[1] || "").trim();
+        const username = String(userMatch[2] || "").trim();
+        return {
+            host,
+            username,
+            effective: `@${username}.${host}`,
+        };
+    }
+    return {
+        host: ns,
+        username: "",
+        effective: `@${ns}`,
+    };
+}
+function getDefaultReadPolicy(namespace) {
+    const identity = parseNamespaceIdentity(namespace);
+    const allowed = ["profile/*", "me/public/*", `${namespace}/*`];
+    if (identity.host) {
+        allowed.push(`${identity.host}/*`);
+    }
+    return {
+        allowed,
+        capabilities: ["read"],
+    };
+}
 function createClaimsRouter() {
     const router = express_1.default.Router();
     router.post("/claims", (req, res) => {
@@ -51,12 +106,30 @@ function createClaimsRouter() {
             return res.status(status).json((0, envelope_1.createErrorEnvelope)(target, { error: out.error }));
         }
         const memories = (0, replay_1.getMemoriesForNamespace)(out.record.namespace);
+        const openedAt = Date.now();
+        const policy = getDefaultReadPolicy(out.record.namespace);
+        const identity = parseNamespaceIdentity(out.record.namespace);
+        const audit = {
+            proofId: computeProofId({
+                namespace: out.record.namespace,
+                identityHash: out.record.identityHash,
+                noise: out.noise,
+                memories,
+            }),
+            openedAt,
+        };
         return res.json((0, envelope_1.createEnvelope)(target, {
+            verified: true,
+            reasonCode: null,
+            reason: null,
+            identity,
+            policy,
+            audit,
             namespace: out.record.namespace,
             identityHash: out.record.identityHash,
             noise: out.noise,
             memories,
-            openedAt: Date.now(),
+            openedAt,
         }));
     });
     return router;

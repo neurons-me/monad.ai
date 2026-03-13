@@ -91,15 +91,15 @@ function appendBlock(block) {
 // Read Blocks
 // -----------------------------------------------------------------------------
 function getAllBlocks() {
-    return db_1.db.prepare("SELECT * FROM blocks ORDER BY id ASC").all();
+    return db_1.db.prepare("SELECT rowid AS _rowid, * FROM blocks ORDER BY rowid ASC").all();
 }
 function getBlocksForIdentity(identityHash) {
     return db_1.db.prepare(`
-    SELECT * FROM blocks WHERE identityHash = ? ORDER BY id ASC
+    SELECT rowid AS _rowid, * FROM blocks WHERE identityHash = ? ORDER BY rowid ASC
   `).all(identityHash);
 }
 function getBlocksForNamespace(namespace) {
     return db_1.db.prepare(`
-    SELECT * FROM blocks WHERE namespace = ? ORDER BY id ASC
+    SELECT rowid AS _rowid, * FROM blocks WHERE namespace = ? ORDER BY rowid ASC
   `).all(namespace);
 }

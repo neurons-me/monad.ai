@@ -5,6 +5,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
+const os_1 = __importDefault(require("os"));
 const db_1 = require("./src/Blockchain/db");
 const blockchain_1 = require("./src/Blockchain/blockchain");
 const users_1 = require("./src/Blockchain/users");
@@ -15,9 +16,12 @@ const meTarget_1 = require("./src/http/meTarget");
 const envelope_1 = require("./src/http/envelope");
 const pathResolver_1 = require("./src/http/pathResolver");
 const claims_1 = require("./src/http/claims");
+const session_1 = require("./src/http/session");
 const legacy_1 = require("./src/http/legacy");
 const shell_1 = require("./src/http/shell");
 const PORT = process.env.PORT || 8161;
+const NODE_HOSTNAME = os_1.default.hostname();
+const NODE_DISPLAY_NAME = `${NODE_HOSTNAME}:${PORT}`;
 const app = (0, express_1.default)();
 app.set("trust proxy", true);
 app.use((0, cors_1.default)());
@@ -30,7 +34,13 @@ app.get("/__bootstrap", (req, res) => {
     const host = (0, namespace_1.resolveHostNamespace)(req);
     const origin = `${req.protocol}://${host}`;
     const target = (0, meTarget_1.normalizeHttpRequestToMeTarget)(req);
-    return res.json((0, envelope_1.createEnvelope)(target, { host, namespace, apiOrigin: origin }));
+    return res.json((0, envelope_1.createEnvelope)(target, {
+        host,
+        namespace,
+        apiOrigin: origin,
+        resolverHostName: NODE_HOSTNAME,
+        resolverDisplayName: NODE_DISPLAY_NAME,
+    }));
 });
 // HTML shell for root and any deep route when Accept: text/html
 app.get("/", (req, res, next) => {
@@ -176,6 +186,7 @@ app.get("/@*", async (req, res) => {
 // Legacy extensions: username claims and biometric matching remain available,
 // but they are no longer presented as core cleaker semantics.
 app.use((0, claims_1.createClaimsRouter)());
+app.use((0, session_1.createSessionRouter)());
 app.use((0, legacy_1.createLegacyRouter)());
 // --- Path Resolver Catch-all (MUST be last route before app.listen) ---
 app.get("/*", (req, res, next) => {

@@ -16,6 +16,7 @@ import { normalizeHttpRequestToMeTarget } from "./src/http/meTarget";
 import { createEnvelope, createErrorEnvelope } from "./src/http/envelope";
 import { createPathResolverHandler } from "./src/http/pathResolver";
 import { createClaimsRouter } from "./src/http/claims";
+import { createSessionRouter } from "./src/http/session";
 import { createLegacyRouter } from "./src/http/legacy";
 import { GUI_PKG_DIST_DIR, htmlShell, wantsHtml } from "./src/http/shell";
 
@@ -213,6 +214,7 @@ app.get("/@*", async (req: express.Request, res: express.Response) => {
 // Legacy extensions: username claims and biometric matching remain available,
 // but they are no longer presented as core cleaker semantics.
 app.use(createClaimsRouter());
+app.use(createSessionRouter());
 app.use(createLegacyRouter());
 
 
