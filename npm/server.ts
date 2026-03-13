@@ -213,6 +213,52 @@ app.get("/@*", async (req: express.Request, res: express.Response) => {
 
 // Legacy extensions: username claims and biometric matching remain available,
 // but they are no longer presented as core cleaker semantics.
+
+// --- CommitSync Protocol Endpoints ---
+// Commit a new semantic memory event (single or batch)
+app.post("/api/v1/commit", async (req, res) => {
+  try {
+    const { events } = req.body;
+    if (!Array.isArray(events) || events.length === 0) {
+      return res.status(400).json({ error: "No events provided" });
+    }
+    const results = [];
+    for (const event of events) {
+      // event: { namespace, path, operator, data, signature, expectedPrevHash, timestamp }
+      try {
+        const memory = require("./src/claim/memoryStore").appendSemanticMemory(event);
+        results.push({ ok: true, memory });
+      } catch (err) {
+        results.push({ ok: false, error: String(err) });
+      }
+    }
+    return res.json({ results });
+  } catch (err) {
+    return res.status(500).json({ error: String(err) });
+  }
+});
+
+// Sync: fetch semantic memory events for a namespace since a given timestamp/hash
+app.get("/api/v1/sync", async (req, res) => {
+  try {
+    const namespace = String(req.query.namespace || "").trim().toLowerCase();
+    const since = Number(req.query.since || 0);
+    if (!namespace) {
+      return res.status(400).json({ error: "Missing namespace" });
+    }
+    const all = require("./src/claim/memoryStore").listHostMemoryHistory;
+    // For now, fetch all semantic memories for the namespace (future: optimize by timestamp/hash)
+    // This demo assumes username and fingerprint are encoded in the namespace or query
+    const username = String(req.query.username || "");
+    const fingerprint = String(req.query.fingerprint || "");
+    const limit = Number(req.query.limit || 2000);
+    const events = all(username, fingerprint, limit).filter(e => e.timestamp > since);
+    return res.json({ events });
+  } catch (err) {
+    return res.status(500).json({ error: String(err) });
+  }
+});
+
 app.use(createClaimsRouter());
 app.use(createSessionRouter());
 app.use(createLegacyRouter());

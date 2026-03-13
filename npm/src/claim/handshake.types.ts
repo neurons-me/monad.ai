@@ -1,11 +1,7 @@
 export type HostCapability = 'sync' | 'sign' | 'local_fs' | string;
-
 export type SessionMode = 'cloud' | 'host';
-
 export type HostStatus = 'pending' | 'authorized' | 'revoked';
-
 export type SessionTransport = 'cloud' | 'host-verified';
-
 export interface CleakerSession {
   username: string;
   mode: SessionMode;
