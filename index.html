@@ -1,172 +1,379 @@
 <!doctype html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>monad.ai</title>
-  <style>
-    :root {
-      --bg: #f6f1e8;
-      --panel: #fffaf0;
-      --ink: #201a16;
-      --muted: #6f6257;
-      --line: #d8c8b8;
-      --accent: #b54d2e;
-      --accent-2: #254f6b;
-      --shadow: 0 20px 60px rgba(32, 26, 22, 0.08);
-    }
-
-    * {
-      box-sizing: border-box;
-    }
-
-    body {
-      margin: 0;
-      font-family: Georgia, "Times New Roman", serif;
-      color: var(--ink);
-      background:
-        radial-gradient(circle at top left, rgba(181, 77, 46, 0.10), transparent 28%),
-        radial-gradient(circle at top right, rgba(37, 79, 107, 0.10), transparent 24%),
-        linear-gradient(180deg, #fbf7ef 0%, var(--bg) 100%);
-    }
-
-    main {
-      max-width: 1040px;
-      margin: 0 auto;
-      padding: 56px 24px 80px;
-    }
-
-    .hero {
-      display: grid;
-      gap: 20px;
-      margin-bottom: 32px;
-    }
-
-    .eyebrow {
-      color: var(--accent);
-      font-size: 0.85rem;
-      letter-spacing: 0.18em;
-      text-transform: uppercase;
-    }
-
-    h1 {
-      margin: 0;
-      font-size: clamp(2.8rem, 7vw, 5.4rem);
-      line-height: 0.95;
-      font-weight: 700;
-    }
-
-    .lead {
-      max-width: 760px;
-      font-size: 1.18rem;
-      line-height: 1.6;
-      color: var(--muted);
-    }
-
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-      gap: 18px;
-      margin-top: 28px;
-    }
-
-    .card {
-      background: var(--panel);
-      border: 1px solid var(--line);
-      border-radius: 18px;
-      padding: 22px;
-      box-shadow: var(--shadow);
-    }
-
-    .card h2 {
-      margin: 0 0 10px;
-      font-size: 1.1rem;
-    }
-
-    .card p {
-      margin: 0 0 14px;
-      color: var(--muted);
-      line-height: 1.5;
-    }
-
-    .card a,
-    .links a {
-      color: var(--accent-2);
-      text-decoration: none;
-    }
-
-    .card a:hover,
-    .links a:hover {
-      text-decoration: underline;
-    }
-
-    .section {
-      margin-top: 42px;
-      padding-top: 22px;
-      border-top: 1px solid var(--line);
-    }
-
-    .links {
-      display: grid;
-      gap: 10px;
-    }
-
-    code {
-      font-family: "SFMono-Regular", Menlo, Consolas, monospace;
-      font-size: 0.95em;
-      background: rgba(32, 26, 22, 0.06);
-      padding: 0.12em 0.38em;
-      border-radius: 6px;
-    }
-  </style>
-</head>
-<body>
-  <main>
-    <section class="hero">
-      <div class="eyebrow">me:// daemon</div>
-      <h1>monad.ai</h1>
-      <p class="lead">
-        Monad.ai is the daemon host for the <code>me://</code> runtime: ledger, replay,
-        claims, namespace routing, and remote semantic resolution.
-      </p>
-    </section>
-
-    <section class="grid">
-      <article class="card">
-        <h2>npm</h2>
-        <p>Node daemon package with the active HTTP runtime, replay hydration, and routing specs.</p>
-        <a href="./npm/README.md">Open npm README</a>
-      </article>
-
-      <article class="card">
-        <h2>crate</h2>
-        <p>Rust surface for daemon/runtime work and future lower-level transport and engine paths.</p>
-        <a href="./crate/README.MD">Open crate README</a>
-      </article>
-
-      <article class="card">
-        <h2>pip</h2>
-        <p>Python package surface for tooling and client-facing integrations around the daemon.</p>
-        <a href="./pip/README.md">Open pip README</a>
-      </article>
-    </section>
-
-    <section class="section">
-      <h2>Docs</h2>
-      <div class="links">
-        <a href="./npm/docs/nrp-routing-spec.md">NRP Routing Spec</a>
-        <a href="./npm/docs/nrp-remote-exchange-spec.md">NRP Remote Exchange Spec</a>
-        <a href="./npm/docs/api/README.md">API Docs</a>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>monad.ai</title>
+    <style>
+      :root { color-scheme: light dark; }
+      body {
+        margin: 0;
+        font: 13px/1.35 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+      }
+      #runtime-controls {
+        position: sticky;
+        top: 0;
+        display: flex;
+        gap: 10px;
+        align-items: center;
+        padding: 10px 14px;
+        border-bottom: 1px solid #ddd;
+        background: #fff;
+        flex-wrap: wrap;
+      }
+      #runtime-controls label {
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+        color: #666;
+      }
+      #runtime-controls select {
+        border: 1px solid #ccc;
+        border-radius: 8px;
+        padding: 6px 8px;
+        min-height: 32px;
+        font: inherit;
+      }
+      .runtime-control {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        padding: 6px 8px;
+        border: 1px solid #eee;
+        border-radius: 10px;
+        min-width: 150px;
+      }
+      .runtime-control.state-pending { border-color: #a2750a33; }
+      .runtime-control.state-loaded { border-color: #0c7a4333; }
+      .runtime-control.state-notfound { border-color: #a12c2c33; }
+      .runtime-status {
+        font-size: 10px;
+        color: #666;
+        line-height: 1.2;
+      }
+      .runtime-status strong {
+        color: #111;
+        font-weight: 700;
+      }
+      .runtime-status .state {
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+      .runtime-status .state.pending { color: #a2750a; }
+      .runtime-status .state.loaded { color: #0c7a43; }
+      .runtime-status .state.notfound { color: #a12c2c; }
+      .runtime-status .url {
+        display: block;
+        max-width: 100%;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .runtime-status .url-row {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+      }
+      .runtime-status .url-text {
+        flex: 1;
+        min-width: 0;
+        font-size: 9px;
+        letter-spacing: 0.02em;
+        white-space: nowrap;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        color: #777;
+      }
+      .runtime-status .url-toggle {
+        border: 0;
+        padding: 0 2px;
+        font-size: 9px;
+        background: transparent;
+        cursor: pointer;
+        color: #1f5fff;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="runtime-controls">
+      <div class="runtime-control state-pending" id="runtime-gui-box">
+        <label for="gui-source">GUI</label>
+        <select id="gui-source">
+          <option value="local" selected>local</option>
+          <option value="cdn">cdn</option>
+        </select>
+        <div class="runtime-status">
+          <span class="state pending" id="runtime-gui-state">pending</span>
+          <span class="url-row">
+            <span class="url-text" id="runtime-gui-url">-</span>
+            <button class="url-toggle" id="runtime-gui-toggle" type="button" hidden>expand</button>
+          </span>
+        </div>
       </div>
-    </section>
-
-    <section class="section">
-      <h2>Run</h2>
-      <div class="links">
-        <div><code>cd npm && npm run start</code></div>
-        <div><code>cd npm && npm run build</code></div>
+      <div class="runtime-control state-pending" id="runtime-cleaker-box">
+        <label for="cleaker-source">Cleaker</label>
+        <select id="cleaker-source">
+          <option value="local" selected>local</option>
+          <option value="cdn">cdn</option>
+        </select>
+        <div class="runtime-status">
+          <span class="state pending" id="runtime-cleaker-state">pending</span>
+          <span class="url-row">
+            <span class="url-text" id="runtime-cleaker-url">-</span>
+            <button class="url-toggle" id="runtime-cleaker-toggle" type="button" hidden>expand</button>
+          </span>
+        </div>
       </div>
-    </section>
-  </main>
-</body>
+      <div class="runtime-control state-pending" id="runtime-me-box">
+        <label for="me-source">Me</label>
+        <select id="me-source">
+          <option value="local" selected>local</option>
+          <option value="cdn">cdn</option>
+        </select>
+        <div class="runtime-status">
+          <span class="state pending" id="runtime-me-state">pending</span>
+          <span class="url-row">
+            <span class="url-text" id="runtime-me-url">-</span>
+            <button class="url-toggle" id="runtime-me-toggle" type="button" hidden>expand</button>
+          </span>
+        </div>
+      </div>
+    </div>
+    <script>
+      const SOURCE_STORAGE_KEY = 'monad.runtime.sources.v1';
+      const defaults = { gui: 'local', cleaker: 'local', me: 'local' };
+      const guiSelect = document.getElementById('gui-source');
+      const cleakerSelect = document.getElementById('cleaker-source');
+      const meSelect = document.getElementById('me-source');
+      const statusEls = {
+        guiBox: document.getElementById('runtime-gui-box'),
+        guiState: document.getElementById('runtime-gui-state'),
+        guiUrl: document.getElementById('runtime-gui-url'),
+        guiToggle: document.getElementById('runtime-gui-toggle'),
+        cleakerBox: document.getElementById('runtime-cleaker-box'),
+        cleakerState: document.getElementById('runtime-cleaker-state'),
+        cleakerUrl: document.getElementById('runtime-cleaker-url'),
+        cleakerToggle: document.getElementById('runtime-cleaker-toggle'),
+        meBox: document.getElementById('runtime-me-box'),
+        meState: document.getElementById('runtime-me-state'),
+        meUrl: document.getElementById('runtime-me-url'),
+        meToggle: document.getElementById('runtime-me-toggle'),
+      };
+
+      const LOCAL_GUI_CSS = '../../this/GUI/npm/dist/styles.css';
+      const LOCAL_GUI_BOOTSTRAP = '../../this/GUI/npm/dist/this.gui.umd.js';
+      const LOCAL_REACT_UMD = '../../this/GUI/npm/node_modules/react/umd/react.production.min.js';
+      const LOCAL_REACTDOM_UMD = '../../this/GUI/npm/node_modules/react-dom/umd/react-dom.production.min.js';
+      const LOCAL_ME_UMD = '../../this/.me/npm/dist/me.umd.js';
+      const LOCAL_CLEAKER_UMD = '../cleaker/npm/dist/cleaker.umd.js';
+      const CDN_GUI_CSS = 'https://cdn.jsdelivr.net/npm/this.gui@latest/dist/styles.css';
+      const CDN_GUI_BOOTSTRAP = 'https://cdn.jsdelivr.net/npm/this.gui@latest/dist/this.gui.umd.js';
+      const CDN_REACT_UMD = 'https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js';
+      const CDN_REACTDOM_UMD = 'https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js';
+      const CDN_ME_UMD = 'https://cdn.jsdelivr.net/npm/this.me@latest/dist/me.umd.js';
+      const CDN_CLEAKER_UMD = 'https://cdn.jsdelivr.net/npm/cleaker@latest/dist/cleaker.umd.js';
+      const loaded = new Set();
+      function resolveAssetUrl(source, localUrl, cdnUrl) {
+        return source === 'cdn' ? cdnUrl : localUrl;
+      }
+
+      function formatRuntimeDetail(version, url) {
+        const shortUrl = String(url || '').replace(window.location.origin, '');
+        return version ? ('v' + version + ' · ' + shortUrl) : shortUrl;
+      }
+
+      function getVersionLabel(which, source) {
+        if (which === 'gui') {
+          if (source === 'cdn') return 'latest';
+          return (window.GUI && window.GUI.version) || 'latest';
+        }
+        return 'latest';
+      }
+
+      function setStatus(which, state, url, version) {
+        const boxEl = statusEls[which + 'Box'];
+        const stateEl = statusEls[which + 'State'];
+        const urlEl = statusEls[which + 'Url'];
+        const toggleEl = statusEls[which + 'Toggle'];
+        if (boxEl) {
+          boxEl.classList.remove('state-pending', 'state-loaded', 'state-notfound');
+          boxEl.classList.add('state-' + state);
+        }
+        if (stateEl) {
+          stateEl.textContent = state === 'loaded'
+            ? 'Loaded'
+            : state === 'notfound'
+            ? 'NotFound'
+            : 'Pending';
+          stateEl.className = 'state ' + state;
+        }
+        if (urlEl) {
+          const full = formatRuntimeDetail(version, url || '-');
+          const isLong = full.length > 36;
+          const short = isLong
+            ? `${full.slice(0, 14)}…${full.slice(-10)}`
+            : full;
+          urlEl.textContent = short;
+          urlEl.title = full;
+          urlEl.dataset.full = full;
+          urlEl.dataset.short = short;
+          urlEl.dataset.expanded = 'false';
+          if (toggleEl) {
+            toggleEl.hidden = !isLong;
+            toggleEl.textContent = 'expand';
+          }
+        }
+      }
+
+      function bindToggle(which) {
+        const urlEl = statusEls[which + 'Url'];
+        const toggleEl = statusEls[which + 'Toggle'];
+        if (!urlEl || !toggleEl) return;
+        toggleEl.addEventListener('click', () => {
+          const expanded = urlEl.dataset.expanded === 'true';
+          urlEl.textContent = expanded ? urlEl.dataset.short || '-' : urlEl.dataset.full || '-';
+          urlEl.dataset.expanded = expanded ? 'false' : 'true';
+          toggleEl.textContent = expanded ? 'expand' : 'collapse';
+        });
+      }
+
+      function loadAsset(url, type) {
+        return new Promise((resolve, reject) => {
+          if (loaded.has(url)) return resolve();
+          let el;
+          if (type === 'style') {
+            el = document.createElement('link');
+            el.rel = 'stylesheet';
+            el.href = url;
+          } else {
+            el = document.createElement('script');
+            el.src = url;
+            el.async = true;
+          }
+          el.onload = () => {
+            loaded.add(url);
+            resolve();
+          };
+          el.onerror = (err) => reject(err);
+          document.head.appendChild(el);
+        });
+      }
+
+      async function ensureReactRuntime(source) {
+        if (window.React && window.ReactDOM) return;
+        const reactUrl = resolveAssetUrl(source, LOCAL_REACT_UMD, CDN_REACT_UMD);
+        const reactDomUrl = resolveAssetUrl(source, LOCAL_REACTDOM_UMD, CDN_REACTDOM_UMD);
+        await loadAsset(reactUrl, 'script');
+        await loadAsset(reactDomUrl, 'script');
+      }
+
+      function readSources() {
+        try {
+          const parsed = JSON.parse(localStorage.getItem(SOURCE_STORAGE_KEY) || '{}');
+          return {
+            gui: parsed.gui === 'cdn' ? 'cdn' : 'local',
+            cleaker: parsed.cleaker === 'cdn' ? 'cdn' : 'local',
+            me: parsed.me === 'cdn' ? 'cdn' : 'local',
+          };
+        } catch {
+          return { ...defaults };
+        }
+      }
+
+      function writeSources(next) {
+        try {
+          localStorage.setItem(SOURCE_STORAGE_KEY, JSON.stringify(next));
+        } catch {
+          // ignore
+        }
+      }
+
+      function syncUi() {
+        const saved = readSources();
+        guiSelect.value = saved.gui;
+        cleakerSelect.value = saved.cleaker;
+        meSelect.value = saved.me;
+      }
+
+      function updateResolvedUrls() {
+        const sources = readSources();
+        setStatus(
+          'gui',
+          'pending',
+          resolveAssetUrl(sources.gui, LOCAL_GUI_BOOTSTRAP, CDN_GUI_BOOTSTRAP),
+          getVersionLabel('gui', sources.gui)
+        );
+        setStatus(
+          'cleaker',
+          'pending',
+          resolveAssetUrl(sources.cleaker, LOCAL_CLEAKER_UMD, CDN_CLEAKER_UMD),
+          getVersionLabel('cleaker', sources.cleaker)
+        );
+        setStatus(
+          'me',
+          'pending',
+          resolveAssetUrl(sources.me, LOCAL_ME_UMD, CDN_ME_UMD),
+          getVersionLabel('me', sources.me)
+        );
+      }
+
+      async function loadGui(source) {
+        const url = resolveAssetUrl(source, LOCAL_GUI_BOOTSTRAP, CDN_GUI_BOOTSTRAP);
+        setStatus('gui', 'pending', url, getVersionLabel('gui', source));
+        try {
+          await ensureReactRuntime(source);
+          await loadAsset(resolveAssetUrl(source, LOCAL_GUI_CSS, CDN_GUI_CSS), 'style');
+          await loadAsset(url, 'script');
+          setStatus('gui', 'loaded', url, (window.GUI && window.GUI.version) || getVersionLabel('gui', source));
+        } catch {
+          setStatus('gui', 'notfound', url, getVersionLabel('gui', source));
+        }
+      }
+
+      async function loadMe(source) {
+        const url = resolveAssetUrl(source, LOCAL_ME_UMD, CDN_ME_UMD);
+        setStatus('me', 'pending', url, getVersionLabel('me', source));
+        try {
+          await loadAsset(url, 'script');
+          setStatus('me', 'loaded', url, getVersionLabel('me', source));
+        } catch {
+          setStatus('me', 'notfound', url, getVersionLabel('me', source));
+        }
+      }
+
+      async function loadCleaker(source) {
+        const url = resolveAssetUrl(source, LOCAL_CLEAKER_UMD, CDN_CLEAKER_UMD);
+        setStatus('cleaker', 'pending', url, getVersionLabel('cleaker', source));
+        try {
+          await loadAsset(url, 'script');
+          setStatus('cleaker', 'loaded', url, getVersionLabel('cleaker', source));
+        } catch {
+          setStatus('cleaker', 'notfound', url, getVersionLabel('cleaker', source));
+        }
+      }
+
+      [guiSelect, cleakerSelect, meSelect].forEach((el) => {
+        el.addEventListener('change', () => {
+          writeSources({
+            gui: guiSelect.value,
+            cleaker: cleakerSelect.value,
+            me: meSelect.value,
+          });
+          if (el === guiSelect) loadGui(guiSelect.value);
+          if (el === cleakerSelect) loadCleaker(cleakerSelect.value);
+          if (el === meSelect) loadMe(meSelect.value);
+        });
+      });
+
+      syncUi();
+      updateResolvedUrls();
+      bindToggle('gui');
+      bindToggle('cleaker');
+      bindToggle('me');
+      loadGui(guiSelect.value);
+      loadCleaker(cleakerSelect.value);
+      loadMe(meSelect.value);
+    </script>
+  </body>
 </html>

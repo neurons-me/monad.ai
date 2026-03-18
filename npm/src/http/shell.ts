@@ -1,10 +1,17 @@
 import type express from "express";
 import path from "path";
+import fs from "fs";
 
 export const GUI_PKG_DIST_DIR = process.env.GUI_PKG_DIST_DIR
   ? path.resolve(process.env.GUI_PKG_DIST_DIR)
   : path.resolve(
       "/Users/suign/Desktop/Neuroverse/all.this/this/GUI/npm/dist"
+    );
+
+export const MONAD_INDEX_PATH = process.env.MONAD_INDEX_PATH
+  ? path.resolve(process.env.MONAD_INDEX_PATH)
+  : path.resolve(
+      "/Users/suign/Desktop/Neuroverse/neurons.me/core/monad.ai/index.html"
     );
 
 export function wantsHtml(req: express.Request) {
@@ -13,6 +20,13 @@ export function wantsHtml(req: express.Request) {
 }
 
 export function htmlShell() {
+  try {
+    if (fs.existsSync(MONAD_INDEX_PATH)) {
+      return fs.readFileSync(MONAD_INDEX_PATH, "utf8");
+    }
+  } catch {
+    // fall back to inline shell
+  }
   return `<!doctype html>
 <html>
   <head>
