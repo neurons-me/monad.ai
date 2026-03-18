@@ -29,6 +29,78 @@ const app = (0, express_1.default)();
 app.set("trust proxy", true);
 app.use((0, cors_1.default)());
 app.use(express_1.default.json());
+function extractNamespaceSelector(namespace) {
+    const raw = String(namespace || "").trim();
+    if (!raw)
+        return { base: "", selectorRaw: null };
+    const match = raw.match(/^([^\[]+)(?:\[(.*)\])?$/);
+    if (!match)
+        return { base: raw, selectorRaw: null };
+    return {
+        base: String(match[1] || "").trim(),
+        selectorRaw: match[2] === undefined ? null : String(match[2] || "").trim(),
+    };
+}
+function findSelectorValue(selectorRaw, selectorType) {
+    const type = String(selectorType || "").trim().toLowerCase();
+    if (!type)
+        return null;
+    const groups = selectorRaw
+        .split("|")
+        .map((part) => part.trim())
+        .filter(Boolean);
+    for (const group of groups) {
+        const parts = group
+            .split(";")
+            .map((part) => part.trim())
+            .filter(Boolean);
+        for (const part of parts) {
+            const colon = part.indexOf(":");
+            if (colon < 0)
+                continue;
+            const head = part.slice(0, colon).trim().toLowerCase();
+            if (!head || head !== type)
+                continue;
+            const rest = part.slice(colon + 1).trim();
+            if (!rest)
+                continue;
+            const value = rest.split(",")[0]?.trim();
+            if (value)
+                return value;
+        }
+    }
+    return null;
+}
+function normalizeWebUrl(value) {
+    const raw = String(value || "").trim();
+    if (!raw)
+        return null;
+    if (/^https?:\/\//i.test(raw))
+        return raw;
+    return `https://${raw.replace(/^\/+/, "")}`;
+}
+function getNamespaceSelectorInfo(namespace) {
+    const { base, selectorRaw } = extractNamespaceSelector(namespace);
+    if (!selectorRaw) {
+        return {
+            base,
+            selectorRaw: null,
+            webTarget: null,
+            hasDevice: false,
+        };
+    }
+    const webValue = findSelectorValue(selectorRaw, "web");
+    const webTarget = webValue ? normalizeWebUrl(webValue) : null;
+    const deviceValue = findSelectorValue(selectorRaw, "device");
+    const hostValue = findSelectorValue(selectorRaw, "host");
+    const hasDevice = !!(deviceValue || hostValue);
+    return {
+        base,
+        selectorRaw,
+        webTarget,
+        hasDevice,
+    };
+}
 function parseBridgeTarget(rawInput) {
     const raw = String(rawInput || "").trim();
     if (!raw)
@@ -180,13 +252,50 @@ const resolveBridgeHandler = async (req, res) => {
         });
     }
     if (parsed.namespace.includes("[") || parsed.namespace.includes("]")) {
-        return res.status(422).json({
-            ok: false,
-            operation: "read",
-            target: bridgeTarget,
-            error: "DEVICE_BINDING_UNRESOLVED",
-            hint: "Namespace contains device binding; resolve via netget/runtime before HTTP.",
-        });
+        const selectorInfo = getNamespaceSelectorInfo(parsed.namespace);
+        if (selectorInfo.webTarget) {
+            const webTarget = {
+                host: requestHost,
+                namespace: parsed.namespace,
+                operation: "read",
+                path: parsed.pathDot || "",
+                nrp: parsed.nrp,
+            };
+            try {
+                const response = await fetch(selectorInfo.webTarget, { method: "GET" });
+                const contentType = String(response.headers.get("content-type") || "text/html; charset=utf-8");
+                const wantsJson = String(req.headers.accept || "").includes("application/json");
+                const bodyText = await response.text();
+                if (!wantsJson) {
+                    res.setHeader("Content-Type", contentType);
+                    return res.status(response.status).send(bodyText);
+                }
+                return res.status(response.status).json((0, envelope_1.createEnvelope)(webTarget, {
+                    value: {
+                        url: selectorInfo.webTarget,
+                        status: response.status,
+                        contentType,
+                        body: bodyText,
+                        overlay: parsed.pathDot || "",
+                    },
+                }));
+            }
+            catch (error) {
+                return res.status(502).json((0, envelope_1.createErrorEnvelope)(webTarget, {
+                    error: "WEB_FETCH_FAILED",
+                    detail: error instanceof Error ? error.message : String(error),
+                }));
+            }
+        }
+        if (selectorInfo.hasDevice) {
+            return res.status(422).json({
+                ok: false,
+                operation: "read",
+                target: bridgeTarget,
+                error: "DEVICE_BINDING_UNRESOLVED",
+                hint: "Namespace contains device binding; resolve via netget/runtime before HTTP.",
+            });
+        }
     }
     if (parsed.pathSlash.startsWith("resolve")) {
         return res.status(400).json({
