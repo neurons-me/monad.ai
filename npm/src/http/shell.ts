@@ -4,15 +4,11 @@ import fs from "fs";
 
 export const GUI_PKG_DIST_DIR = process.env.GUI_PKG_DIST_DIR
   ? path.resolve(process.env.GUI_PKG_DIST_DIR)
-  : path.resolve(
-      "/Users/suign/Desktop/Neuroverse/all.this/this/GUI/npm/dist"
-    );
+  : path.resolve(process.cwd(), "../../this/GUI/npm/dist");
 
 export const MONAD_INDEX_PATH = process.env.MONAD_INDEX_PATH
   ? path.resolve(process.env.MONAD_INDEX_PATH)
-  : path.resolve(
-      "/Users/suign/Desktop/Neuroverse/neurons.me/core/monad.ai/index.html"
-    );
+  : path.resolve(process.cwd(), "../index.html");
 
 export function wantsHtml(req: express.Request) {
   const accept = String(req.headers.accept || "");
@@ -35,7 +31,7 @@ export function htmlShell() {
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <link rel="icon" href="/gui/favicon.ico" />
-    <link rel="stylesheet" href="/gui/this.gui.css" />
+    <link rel="stylesheet" href="/gui/styles.css" />
     <title>cleaker.me</title>
   </head>
   <body>
