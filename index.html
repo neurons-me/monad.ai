@@ -142,7 +142,7 @@
     </div>
     <script>
       const SOURCE_STORAGE_KEY = 'monad.runtime.sources.v1';
-      const defaults = { gui: 'local', cleaker: 'local', me: 'local' };
+      const defaults = { gui: 'cdn', cleaker: 'cdn', me: 'cdn' };
       const guiSelect = document.getElementById('gui-source');
       const cleakerSelect = document.getElementById('cleaker-source');
       const meSelect = document.getElementById('me-source');
@@ -272,9 +272,9 @@
         try {
           const parsed = JSON.parse(localStorage.getItem(SOURCE_STORAGE_KEY) || '{}');
           return {
-            gui: parsed.gui === 'cdn' ? 'cdn' : 'local',
-            cleaker: parsed.cleaker === 'cdn' ? 'cdn' : 'local',
-            me: parsed.me === 'cdn' ? 'cdn' : 'local',
+            gui: parsed.gui === 'cdn' ? 'cdn' : defaults.gui,
+            cleaker: parsed.cleaker === 'cdn' ? 'cdn' : defaults.cleaker,
+            me: parsed.me === 'cdn' ? 'cdn' : defaults.me,
           };
         } catch {
           return { ...defaults };
@@ -319,37 +319,72 @@
       }
 
       async function loadGui(source) {
-        const url = resolveAssetUrl(source, LOCAL_GUI_BOOTSTRAP, CDN_GUI_BOOTSTRAP);
-        setStatus('gui', 'pending', url, getVersionLabel('gui', source));
+        const primaryUrl = resolveAssetUrl(source, LOCAL_GUI_BOOTSTRAP, CDN_GUI_BOOTSTRAP);
+        const fallbackSource = source === 'local' ? 'cdn' : source;
+        const fallbackUrl = resolveAssetUrl(fallbackSource, LOCAL_GUI_BOOTSTRAP, CDN_GUI_BOOTSTRAP);
+        setStatus('gui', 'pending', primaryUrl, getVersionLabel('gui', source));
         try {
           await ensureReactRuntime(source);
           await loadAsset(resolveAssetUrl(source, LOCAL_GUI_CSS, CDN_GUI_CSS), 'style');
-          await loadAsset(url, 'script');
-          setStatus('gui', 'loaded', url, (window.GUI && window.GUI.version) || getVersionLabel('gui', source));
+          await loadAsset(primaryUrl, 'script');
+          setStatus('gui', 'loaded', primaryUrl, (window.GUI && window.GUI.version) || getVersionLabel('gui', source));
         } catch {
-          setStatus('gui', 'notfound', url, getVersionLabel('gui', source));
+          if (source === 'local') {
+            try {
+              await ensureReactRuntime('cdn');
+              await loadAsset(CDN_GUI_CSS, 'style');
+              await loadAsset(fallbackUrl, 'script');
+              setStatus('gui', 'loaded', fallbackUrl, (window.GUI && window.GUI.version) || getVersionLabel('gui', 'cdn'));
+              return;
+            } catch {
+              // fall through to notfound
+            }
+          }
+          setStatus('gui', 'notfound', fallbackUrl, getVersionLabel('gui', fallbackSource));
         }
       }
 
       async function loadMe(source) {
-        const url = resolveAssetUrl(source, LOCAL_ME_UMD, CDN_ME_UMD);
-        setStatus('me', 'pending', url, getVersionLabel('me', source));
+        const primaryUrl = resolveAssetUrl(source, LOCAL_ME_UMD, CDN_ME_UMD);
+        const fallbackSource = source === 'local' ? 'cdn' : source;
+        const fallbackUrl = resolveAssetUrl(fallbackSource, LOCAL_ME_UMD, CDN_ME_UMD);
+        setStatus('me', 'pending', primaryUrl, getVersionLabel('me', source));
         try {
-          await loadAsset(url, 'script');
-          setStatus('me', 'loaded', url, getVersionLabel('me', source));
+          await loadAsset(primaryUrl, 'script');
+          setStatus('me', 'loaded', primaryUrl, getVersionLabel('me', source));
         } catch {
-          setStatus('me', 'notfound', url, getVersionLabel('me', source));
+          if (source === 'local') {
+            try {
+              await loadAsset(fallbackUrl, 'script');
+              setStatus('me', 'loaded', fallbackUrl, getVersionLabel('me', 'cdn'));
+              return;
+            } catch {
+              // fall through to notfound
+            }
+          }
+          setStatus('me', 'notfound', fallbackUrl, getVersionLabel('me', fallbackSource));
         }
       }
 
       async function loadCleaker(source) {
-        const url = resolveAssetUrl(source, LOCAL_CLEAKER_UMD, CDN_CLEAKER_UMD);
-        setStatus('cleaker', 'pending', url, getVersionLabel('cleaker', source));
+        const primaryUrl = resolveAssetUrl(source, LOCAL_CLEAKER_UMD, CDN_CLEAKER_UMD);
+        const fallbackSource = source === 'local' ? 'cdn' : source;
+        const fallbackUrl = resolveAssetUrl(fallbackSource, LOCAL_CLEAKER_UMD, CDN_CLEAKER_UMD);
+        setStatus('cleaker', 'pending', primaryUrl, getVersionLabel('cleaker', source));
         try {
-          await loadAsset(url, 'script');
-          setStatus('cleaker', 'loaded', url, getVersionLabel('cleaker', source));
+          await loadAsset(primaryUrl, 'script');
+          setStatus('cleaker', 'loaded', primaryUrl, getVersionLabel('cleaker', source));
         } catch {
-          setStatus('cleaker', 'notfound', url, getVersionLabel('cleaker', source));
+          if (source === 'local') {
+            try {
+              await loadAsset(fallbackUrl, 'script');
+              setStatus('cleaker', 'loaded', fallbackUrl, getVersionLabel('cleaker', 'cdn'));
+              return;
+            } catch {
+              // fall through to notfound
+            }
+          }
+          setStatus('cleaker', 'notfound', fallbackUrl, getVersionLabel('cleaker', fallbackSource));
         }
       }
 
