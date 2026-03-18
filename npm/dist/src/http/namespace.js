@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.resolveHostNamespace = resolveHostNamespace;
+exports.resolveTransportHost = resolveTransportHost;
 exports.getHostSubdomain = getHostSubdomain;
 exports.isReservedLabel = isReservedLabel;
 exports.normalizeUsernameLabel = normalizeUsernameLabel;
@@ -16,6 +17,15 @@ function resolveHostNamespace(req) {
     const hostHeaderRaw = (Array.isArray(xfHost) ? xfHost[0] : xfHost) ||
         req.headers.host ||
         "";
+    const first = String(hostHeaderRaw).split(",")[0].trim();
+    const noProto = first.replace(/^https?:\/\//i, "");
+    const hostnameOnly = noProto.split(":")[0].trim();
+    return hostnameOnly || "unknown";
+}
+function resolveTransportHost(req) {
+    const hostHeaderRaw = Array.isArray(req.headers.host)
+        ? req.headers.host[0]
+        : req.headers.host || "";
     const first = String(hostHeaderRaw).split(",")[0].trim();
     const noProto = first.replace(/^https?:\/\//i, "");
     const hostnameOnly = noProto.split(":")[0].trim();

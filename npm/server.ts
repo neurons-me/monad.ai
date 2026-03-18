@@ -14,6 +14,7 @@ import {
   resolveHostNamespace,
   resolveLens,
   resolveNamespace,
+  resolveTransportHost,
 } from "./src/http/namespace";
 import { normalizeHttpRequestToMeTarget } from "./src/http/meTarget";
 import { createEnvelope, createErrorEnvelope } from "./src/http/envelope";
@@ -36,7 +37,7 @@ type BridgeTarget = {
   selector: string;
   pathSlash: string;
   pathDot: string;
-  meTarget: string;
+  nrp: string;
 };
 
 type ClaimIdentity = {
@@ -67,14 +68,14 @@ function parseBridgeTarget(rawInput: string): BridgeTarget | null {
   const pathParts = parts.slice(1);
   const pathSlash = pathParts.join("/");
   const pathDot = pathParts.join(".");
-  const meTarget = `me://${namespace}:${selector}/${pathDot || "_"}`;
+  const nrp = `me://${namespace}:${selector}/${pathDot || "_"}`;
 
   return {
     namespace,
     selector,
     pathSlash,
     pathDot,
-    meTarget,
+    nrp,
   };
 }
 
@@ -147,7 +148,7 @@ function normalizeOperation(input: unknown): "read" | "write" | "claim" | "open"
 
 function buildBridgeTarget(resolved: BridgeTarget | null, requestHost: string, rawFallback = "") {
   const namespaceMe = resolved?.namespace || "unknown";
-  const meTarget = resolved?.meTarget || rawFallback || `me://${namespaceMe}:read/_`;
+  const nrp = resolved?.nrp || rawFallback || `me://${namespaceMe}:read/_`;
   return {
     namespace: {
       me: namespaceMe,
@@ -155,7 +156,7 @@ function buildBridgeTarget(resolved: BridgeTarget | null, requestHost: string, r
     },
     operation: "read" as const,
     path: resolved?.pathDot || "",
-    meTarget,
+    nrp,
   };
 }
 
@@ -165,13 +166,13 @@ function buildNormalizedTarget(
   operation: "read" | "write" | "claim" | "open",
   path: string,
 ) {
-  const host = resolveHostNamespace(req) || "unknown";
+  const host = resolveTransportHost(req) || "unknown";
   return {
     host,
     namespace,
     operation,
     path,
-    meTarget: `me://${namespace}:${operation}/${path || "_"}`,
+    nrp: `me://${namespace}:${operation}/${path || "_"}`,
   };
 }
 
@@ -181,7 +182,7 @@ app.use("/gui", express.static(GUI_PKG_DIST_DIR));
 // Bootstrap endpoint for GUI runtime (namespace + endpoint hints)
 app.get("/__bootstrap", (req, res) => {
   const namespace = resolveNamespace(req);
-  const host = resolveHostNamespace(req);
+  const host = resolveTransportHost(req);
   const origin = `${req.protocol}://${host}`;
   const target = normalizeHttpRequestToMeTarget(req);
   return res.json(createEnvelope(target, {
@@ -197,7 +198,7 @@ const resolveBridgeHandler = async (req: express.Request, res: express.Response)
   const rawTarget = String((req.query as any)?.target || "").trim();
   const decodedTarget = rawTarget ? decodeURIComponent(rawTarget) : "";
   const parsed = parseBridgeTarget(decodedTarget);
-  const requestHost = resolveHostNamespace(req) || NODE_HOSTNAME || "localhost";
+  const requestHost = resolveTransportHost(req) || NODE_HOSTNAME || "localhost";
 
   if (!parsed) {
     return res.status(400).json({
@@ -287,11 +288,15 @@ app.get("/", (req, res, next) => {
 });
 // Minimal request logger (no identity semantics, only transport info)
 app.use((req, _res, next) => {
-  const host = resolveHostNamespace(req);
+  const transportHost = resolveTransportHost(req);
+  const forwardedHost = resolveHostNamespace(req);
   const lens = resolveLens(req);
   const target = normalizeHttpRequestToMeTarget(req);
+  const forwardedSuffix = forwardedHost && forwardedHost !== transportHost
+    ? ` xf=${forwardedHost}`
+    : "";
   console.log(
-    `→ ${req.method} ${req.url} host=${host || "unknown"} ns=${target.namespace} lens=${lens} op=${target.operation} me=${target.meTarget}`
+    `→ ${req.method} ${req.url} host=${transportHost || "unknown"} ns=${target.namespace} lens=${lens} op=${target.operation} nrp=${target.nrp}${forwardedSuffix}`
   );
   next();
 });

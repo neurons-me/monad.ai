@@ -37,7 +37,7 @@ function inferNamespace(req) {
     return (0, namespace_1.resolveNamespace)(req);
 }
 function normalizeHttpRequestToMeTarget(req) {
-    const host = (0, namespace_1.resolveHostNamespace)(req);
+    const host = (0, namespace_1.resolveTransportHost)(req);
     const operation = inferOperation(req);
     const namespace = inferNamespace(req);
     const path = operation === "claim" || operation === "open"
@@ -48,6 +48,6 @@ function normalizeHttpRequestToMeTarget(req) {
         namespace,
         operation,
         path,
-        meTarget: `me://${namespace}:${operation}/${path || "_"}`,
+        nrp: `me://${namespace}:${operation}/${path || "_"}`,
     };
 }

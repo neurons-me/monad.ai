@@ -1,5 +1,5 @@
 import type express from "express";
-import { resolveHostNamespace, resolveNamespace } from "./namespace";
+import { resolveNamespace, resolveTransportHost } from "./namespace";
 
 export type MeOperationKind = "read" | "write" | "claim" | "open";
 
@@ -8,7 +8,7 @@ export interface NormalizedMeTarget {
   namespace: string;
   operation: MeOperationKind;
   path: string;
-  meTarget: string;
+  nrp: string;
 }
 
 function normalizePathSegments(rawPath: string) {
@@ -47,7 +47,7 @@ function inferNamespace(req: express.Request): string {
 }
 
 export function normalizeHttpRequestToMeTarget(req: express.Request): NormalizedMeTarget {
-  const host = resolveHostNamespace(req);
+  const host = resolveTransportHost(req);
   const operation = inferOperation(req);
   const namespace = inferNamespace(req);
   const path = operation === "claim" || operation === "open"
@@ -59,6 +59,6 @@ export function normalizeHttpRequestToMeTarget(req: express.Request): Normalized
     namespace,
     operation,
     path,
-    meTarget: `me://${namespace}:${operation}/${path || "_"}`,
+    nrp: `me://${namespace}:${operation}/${path || "_"}`,
   };
 }

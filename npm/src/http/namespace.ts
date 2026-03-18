@@ -13,6 +13,16 @@ export function resolveHostNamespace(req: express.Request) {
   return hostnameOnly || "unknown";
 }
 
+export function resolveTransportHost(req: express.Request) {
+  const hostHeaderRaw = Array.isArray(req.headers.host)
+    ? req.headers.host[0]
+    : req.headers.host || "";
+  const first = String(hostHeaderRaw).split(",")[0].trim();
+  const noProto = first.replace(/^https?:\/\//i, "");
+  const hostnameOnly = noProto.split(":")[0].trim();
+  return hostnameOnly || "unknown";
+}
+
 export function getHostSubdomain(hostname: string) {
   const parts = String(hostname || "").split(".").filter(Boolean);
   if (parts.length === 1 && parts[0] === "localhost") return "";

@@ -51,13 +51,13 @@ function parseBridgeTarget(rawInput) {
     const pathParts = parts.slice(1);
     const pathSlash = pathParts.join("/");
     const pathDot = pathParts.join(".");
-    const meTarget = `me://${namespace}:${selector}/${pathDot || "_"}`;
+    const nrp = `me://${namespace}:${selector}/${pathDot || "_"}`;
     return {
         namespace,
         selector,
         pathSlash,
         pathDot,
-        meTarget,
+        nrp,
     };
 }
 function toStableJson(value) {
@@ -120,7 +120,7 @@ function normalizeOperation(input) {
 }
 function buildBridgeTarget(resolved, requestHost, rawFallback = "") {
     const namespaceMe = resolved?.namespace || "unknown";
-    const meTarget = resolved?.meTarget || rawFallback || `me://${namespaceMe}:read/_`;
+    const nrp = resolved?.nrp || rawFallback || `me://${namespaceMe}:read/_`;
     return {
         namespace: {
             me: namespaceMe,
@@ -128,17 +128,17 @@ function buildBridgeTarget(resolved, requestHost, rawFallback = "") {
         },
         operation: "read",
         path: resolved?.pathDot || "",
-        meTarget,
+        nrp,
     };
 }
 function buildNormalizedTarget(req, namespace, operation, path) {
-    const host = (0, namespace_1.resolveHostNamespace)(req) || "unknown";
+    const host = (0, namespace_1.resolveTransportHost)(req) || "unknown";
     return {
         host,
         namespace,
         operation,
         path,
-        meTarget: `me://${namespace}:${operation}/${path || "_"}`,
+        nrp: `me://${namespace}:${operation}/${path || "_"}`,
     };
 }
 // Serve built GUI assets from this.GUI package dist
@@ -146,7 +146,7 @@ app.use("/gui", express_1.default.static(shell_1.GUI_PKG_DIST_DIR));
 // Bootstrap endpoint for GUI runtime (namespace + endpoint hints)
 app.get("/__bootstrap", (req, res) => {
     const namespace = (0, namespace_1.resolveNamespace)(req);
-    const host = (0, namespace_1.resolveHostNamespace)(req);
+    const host = (0, namespace_1.resolveTransportHost)(req);
     const origin = `${req.protocol}://${host}`;
     const target = (0, meTarget_1.normalizeHttpRequestToMeTarget)(req);
     return res.json((0, envelope_1.createEnvelope)(target, {
@@ -161,7 +161,7 @@ const resolveBridgeHandler = async (req, res) => {
     const rawTarget = String(req.query?.target || "").trim();
     const decodedTarget = rawTarget ? decodeURIComponent(rawTarget) : "";
     const parsed = parseBridgeTarget(decodedTarget);
-    const requestHost = (0, namespace_1.resolveHostNamespace)(req) || NODE_HOSTNAME || "localhost";
+    const requestHost = (0, namespace_1.resolveTransportHost)(req) || NODE_HOSTNAME || "localhost";
     if (!parsed) {
         return res.status(400).json({
             ok: false,
@@ -243,10 +243,14 @@ app.get("/", (req, res, next) => {
 });
 // Minimal request logger (no identity semantics, only transport info)
 app.use((req, _res, next) => {
-    const host = (0, namespace_1.resolveHostNamespace)(req);
+    const transportHost = (0, namespace_1.resolveTransportHost)(req);
+    const forwardedHost = (0, namespace_1.resolveHostNamespace)(req);
     const lens = (0, namespace_1.resolveLens)(req);
     const target = (0, meTarget_1.normalizeHttpRequestToMeTarget)(req);
-    console.log(`→ ${req.method} ${req.url} host=${host || "unknown"} ns=${target.namespace} lens=${lens} op=${target.operation} me=${target.meTarget}`);
+    const forwardedSuffix = forwardedHost && forwardedHost !== transportHost
+        ? ` xf=${forwardedHost}`
+        : "";
+    console.log(`→ ${req.method} ${req.url} host=${transportHost || "unknown"} ns=${target.namespace} lens=${lens} op=${target.operation} nrp=${target.nrp}${forwardedSuffix}`);
     next();
 });
 // --- Universal Ledger Write Surface ---------------------------------
