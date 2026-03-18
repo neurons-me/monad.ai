@@ -27,9 +27,12 @@ function inferOperation(req) {
 }
 function inferNamespace(req) {
     const operation = inferOperation(req);
+    const body = (req.body ?? {});
+    const hinted = String(body.namespace || "").trim();
+    if (hinted)
+        return hinted;
     if (operation === "claim" || operation === "open") {
-        const body = (req.body ?? {});
-        return String(body.namespace || "").trim() || (0, namespace_1.resolveNamespace)(req);
+        return (0, namespace_1.resolveNamespace)(req);
     }
     return (0, namespace_1.resolveNamespace)(req);
 }

@@ -3,18 +3,30 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.GUI_PKG_DIST_DIR = void 0;
+exports.MONAD_INDEX_PATH = exports.GUI_PKG_DIST_DIR = void 0;
 exports.wantsHtml = wantsHtml;
 exports.htmlShell = htmlShell;
 const path_1 = __importDefault(require("path"));
+const fs_1 = __importDefault(require("fs"));
 exports.GUI_PKG_DIST_DIR = process.env.GUI_PKG_DIST_DIR
     ? path_1.default.resolve(process.env.GUI_PKG_DIST_DIR)
-    : path_1.default.resolve("/Users/suign/Desktop/Neuroverse/all.this/this/GUI/npm/dist");
+    : path_1.default.resolve(process.cwd(), "../../this/GUI/npm/dist");
+exports.MONAD_INDEX_PATH = process.env.MONAD_INDEX_PATH
+    ? path_1.default.resolve(process.env.MONAD_INDEX_PATH)
+    : path_1.default.resolve(process.cwd(), "../index.html");
 function wantsHtml(req) {
     const accept = String(req.headers.accept || "");
     return accept.includes("text/html");
 }
 function htmlShell() {
+    try {
+        if (fs_1.default.existsSync(exports.MONAD_INDEX_PATH)) {
+            return fs_1.default.readFileSync(exports.MONAD_INDEX_PATH, "utf8");
+        }
+    }
+    catch {
+        // fall back to inline shell
+    }
     return `<!doctype html>
 <html>
   <head>
@@ -23,7 +35,7 @@ function htmlShell() {
     <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <link rel="icon" href="/gui/favicon.ico" />
-    <link rel="stylesheet" href="/gui/this.gui.css" />
+    <link rel="stylesheet" href="/gui/styles.css" />
     <title>cleaker.me</title>
   </head>
   <body>

@@ -6,11 +6,14 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const os_1 = __importDefault(require("os"));
+const crypto_1 = require("crypto");
 const db_1 = require("./src/Blockchain/db");
 const blockchain_1 = require("./src/Blockchain/blockchain");
 const users_1 = require("./src/Blockchain/users");
 const records_1 = require("./src/claim/records");
 const replay_1 = require("./src/claim/replay");
+const records_2 = require("./src/claim/records");
+const replay_2 = require("./src/claim/replay");
 const namespace_1 = require("./src/http/namespace");
 const meTarget_1 = require("./src/http/meTarget");
 const envelope_1 = require("./src/http/envelope");
@@ -26,6 +29,118 @@ const app = (0, express_1.default)();
 app.set("trust proxy", true);
 app.use((0, cors_1.default)());
 app.use(express_1.default.json());
+function parseBridgeTarget(rawInput) {
+    const raw = String(rawInput || "").trim();
+    if (!raw)
+        return null;
+    const stripped = raw.startsWith("me://") ? raw.slice("me://".length) : raw;
+    const sanitized = stripped.replace(/^\/+/, "").trim();
+    if (!sanitized)
+        return null;
+    const parts = sanitized.split("/").filter(Boolean);
+    if (parts.length === 0)
+        return null;
+    const head = parts[0];
+    if (!head)
+        return null;
+    const headParts = head.split(":");
+    const namespace = String(headParts[0] || "").trim();
+    if (!namespace)
+        return null;
+    const selector = String(headParts[1] || "read").trim() || "read";
+    const pathParts = parts.slice(1);
+    const pathSlash = pathParts.join("/");
+    const pathDot = pathParts.join(".");
+    const meTarget = `me://${namespace}:${selector}/${pathDot || "_"}`;
+    return {
+        namespace,
+        selector,
+        pathSlash,
+        pathDot,
+        meTarget,
+    };
+}
+function toStableJson(value) {
+    if (value === null || typeof value !== "object") {
+        return JSON.stringify(value);
+    }
+    if (Array.isArray(value)) {
+        return `[${value.map((item) => toStableJson(item)).join(",")}]`;
+    }
+    const obj = value;
+    const keys = Object.keys(obj).sort();
+    const entries = keys.map((key) => `${JSON.stringify(key)}:${toStableJson(obj[key])}`);
+    return `{${entries.join(",")}}`;
+}
+function computeProofId(input) {
+    return (0, crypto_1.createHash)("sha256").update(toStableJson(input)).digest("hex");
+}
+function parseNamespaceIdentity(namespace) {
+    const ns = String(namespace || "").trim().toLowerCase();
+    if (!ns) {
+        return {
+            host: "unknown",
+            username: "",
+            effective: "unclaimed",
+        };
+    }
+    const userMatch = ns.match(/^([^\/]+)\/users\/([^\/]+)$/i);
+    if (userMatch) {
+        const host = String(userMatch[1] || "").trim();
+        const username = String(userMatch[2] || "").trim();
+        return {
+            host,
+            username,
+            effective: `@${username}.${host}`,
+        };
+    }
+    return {
+        host: ns,
+        username: "",
+        effective: `@${ns}`,
+    };
+}
+function getDefaultReadPolicy(namespace) {
+    const identity = parseNamespaceIdentity(namespace);
+    const allowed = ["profile/*", "me/public/*", `${namespace}/*`];
+    if (identity.host) {
+        allowed.push(`${identity.host}/*`);
+    }
+    return {
+        allowed,
+        capabilities: ["read"],
+    };
+}
+function normalizeOperation(input) {
+    const raw = String(input || "").trim().toLowerCase();
+    if (raw === "claim" || raw === "open" || raw === "read" || raw === "write") {
+        return raw;
+    }
+    return "write";
+}
+function buildBridgeTarget(resolved, requestHost, rawFallback = "") {
+    const namespaceMe = resolved?.namespace || "unknown";
+    const meTarget = resolved?.meTarget || rawFallback || `me://${namespaceMe}:read/_`;
+    return {
+        namespace: {
+            me: namespaceMe,
+            host: requestHost,
+        },
+        operation: "read",
+        path: resolved?.pathDot || "",
+        meTarget,
+    };
+}
+function buildNormalizedTarget(req, namespace, operation, path) {
+    const host = (0, namespace_1.resolveHostNamespace)(req) || "unknown";
+    return {
+        host,
+        namespace,
+        operation,
+        path,
+        meTarget: `me://${namespace}:${operation}/${path || "_"}`,
+    };
+}
 // Serve built GUI assets from this.GUI package dist
 app.use("/gui", express_1.default.static(shell_1.GUI_PKG_DIST_DIR));
 // Bootstrap endpoint for GUI runtime (namespace + endpoint hints)
@@ -42,8 +157,85 @@ app.get("/__bootstrap", (req, res) => {
         resolverDisplayName: NODE_DISPLAY_NAME,
     }));
 });
+const resolveBridgeHandler = async (req, res) => {
+    const rawTarget = String(req.query?.target || "").trim();
+    const decodedTarget = rawTarget ? decodeURIComponent(rawTarget) : "";
+    const parsed = parseBridgeTarget(decodedTarget);
+    const requestHost = (0, namespace_1.resolveHostNamespace)(req) || NODE_HOSTNAME || "localhost";
+    if (!parsed) {
+        return res.status(400).json({
+            ok: false,
+            operation: "read",
+            target: buildBridgeTarget(null, requestHost, decodedTarget),
+            error: "TARGET_REQUIRED",
+        });
+    }
+    const bridgeTarget = buildBridgeTarget(parsed, requestHost, decodedTarget);
+    if (!parsed.pathSlash) {
+        return res.status(400).json({
+            ok: false,
+            operation: "read",
+            target: bridgeTarget,
+            error: "TARGET_PATH_REQUIRED",
+        });
+    }
+    if (parsed.namespace.includes("[") || parsed.namespace.includes("]")) {
+        return res.status(422).json({
+            ok: false,
+            operation: "read",
+            target: bridgeTarget,
+            error: "DEVICE_BINDING_UNRESOLVED",
+            hint: "Namespace contains device binding; resolve via netget/runtime before HTTP.",
+        });
+    }
+    if (parsed.pathSlash.startsWith("resolve")) {
+        return res.status(400).json({
+            ok: false,
+            operation: "read",
+            target: bridgeTarget,
+            error: "RESOLVE_PATH_BLOCKED",
+        });
+    }
+    try {
+        const origin = `http://localhost:${PORT}`;
+        const url = `${origin}/${parsed.pathSlash}`;
+        const response = await fetch(url, {
+            method: "GET",
+            headers: {
+                "x-forwarded-host": parsed.namespace,
+                "x-forwarded-proto": "http",
+                host: parsed.namespace,
+            },
+        });
+        const contentType = String(response.headers.get("content-type") || "");
+        if (contentType.includes("application/json")) {
+            const payload = await response.json();
+            const patched = payload && typeof payload === "object"
+                ? { ...payload, target: bridgeTarget }
+                : { ok: response.ok, operation: "read", target: bridgeTarget, value: payload };
+            return res.status(response.status).json(patched);
+        }
+        const text = await response.text();
+        return res.status(response.status).send(text);
+    }
+    catch (error) {
+        return res.status(500).json({
+            ok: false,
+            operation: "read",
+            target: bridgeTarget,
+            error: "BRIDGE_FETCH_FAILED",
+            detail: error instanceof Error ? error.message : String(error),
+        });
+    }
+};
+// --- Local Bridge: me:// -> http://localhost:<port>/resolve?target=...
+// Allows browser testing of me:// targets without registering a protocol handler.
+app.get("/resolve", resolveBridgeHandler);
 // HTML shell for root and any deep route when Accept: text/html
 app.get("/", (req, res, next) => {
+    if (req.query?.target) {
+        return resolveBridgeHandler(req, res);
+    }
     if (!(0, shell_1.wantsHtml)(req))
         return next();
     res.setHeader("Content-Type", "text/html; charset=utf-8");
@@ -51,11 +243,10 @@ app.get("/", (req, res, next) => {
 });
 // Minimal request logger (no identity semantics, only transport info)
 app.use((req, _res, next) => {
-    const ns = (0, namespace_1.resolveNamespace)(req);
     const host = (0, namespace_1.resolveHostNamespace)(req);
     const lens = (0, namespace_1.resolveLens)(req);
     const target = (0, meTarget_1.normalizeHttpRequestToMeTarget)(req);
-    console.log(`→ ${req.method} ${req.url} host=${host || "unknown"} ns=${ns} lens=${lens} op=${target.operation} me=${target.meTarget}`);
+    console.log(`→ ${req.method} ${req.url} host=${host || "unknown"} ns=${target.namespace} lens=${lens} op=${target.operation} me=${target.meTarget}`);
     next();
 });
 // --- Universal Ledger Write Surface ---------------------------------
@@ -63,17 +254,85 @@ app.use((req, _res, next) => {
 app.post("/", async (req, res) => {
     const body = req.body;
     const target = (0, meTarget_1.normalizeHttpRequestToMeTarget)(req);
+    const rawTarget = String(body?.target || req.query?.target || "").trim();
+    const parsedTarget = rawTarget ? parseBridgeTarget(rawTarget) : null;
+    const operation = normalizeOperation(body?.operation || body?.op || parsedTarget?.selector);
+    const resolvedNamespace = String(body?.namespace || parsedTarget?.namespace || (0, namespace_1.resolveNamespace)(req));
     if (!body || typeof body !== "object") {
         return res.status(400).json((0, envelope_1.createErrorEnvelope)(target, {
             error: "Expected JSON block in request body",
         }));
     }
+    if (operation === "claim") {
+        const out = (0, records_1.claimNamespace)({
+            namespace: resolvedNamespace,
+            secret: String(body?.secret || ""),
+            publicKey: String(body?.publicKey || "").trim() || null,
+        });
+        const claimTarget = buildNormalizedTarget(req, resolvedNamespace, "claim", "");
+        if (!out.ok) {
+            const status = out.error === "NAMESPACE_TAKEN"
+                ? 409
+                : out.error === "NAMESPACE_REQUIRED" || out.error === "SECRET_REQUIRED"
+                    ? 400
+                    : 500;
+            return res.status(status).json((0, envelope_1.createErrorEnvelope)(claimTarget, { error: out.error }));
+        }
+        return res.status(201).json((0, envelope_1.createEnvelope)(claimTarget, {
+            namespace: out.record.namespace,
+            identityHash: out.record.identityHash,
+            createdAt: out.record.createdAt,
+        }));
+    }
+    if (operation === "open") {
+        const out = (0, records_1.openNamespace)({
+            namespace: resolvedNamespace,
+            secret: String(body?.secret || ""),
+        });
+        const openTarget = buildNormalizedTarget(req, resolvedNamespace, "open", "");
+        if (!out.ok) {
+            const status = out.error === "CLAIM_NOT_FOUND"
+                ? 404
+                : out.error === "CLAIM_VERIFICATION_FAILED"
+                    ? 403
+                    : out.error === "NAMESPACE_REQUIRED" || out.error === "SECRET_REQUIRED"
+                        ? 400
+                        : 500;
+            return res.status(status).json((0, envelope_1.createErrorEnvelope)(openTarget, { error: out.error }));
+        }
+        const memories = (0, replay_1.getMemoriesForNamespace)(out.record.namespace);
+        const openedAt = Date.now();
+        const policy = getDefaultReadPolicy(out.record.namespace);
+        const identity = parseNamespaceIdentity(out.record.namespace);
+        const audit = {
+            proofId: computeProofId({
+                namespace: out.record.namespace,
+                identityHash: out.record.identityHash,
+                noise: out.noise,
+                memories,
+            }),
+            openedAt,
+        };
+        return res.json((0, envelope_1.createEnvelope)(openTarget, {
+            verified: true,
+            reasonCode: null,
+            reason: null,
+            identity,
+            policy,
+            audit,
+            namespace: out.record.namespace,
+            identityHash: out.record.identityHash,
+            noise: out.noise,
+            memories,
+            openedAt,
+        }));
+    }
     const blockId = crypto.randomUUID();
     const timestamp = Date.now();
-    const namespace = (0, namespace_1.resolveNamespace)(req);
-    const claim = (0, records_1.getClaim)(namespace);
+    const namespace = resolvedNamespace;
+    const claim = (0, records_2.getClaim)(namespace);
     if (claim) {
-        const authorized = (0, replay_1.isNamespaceWriteAuthorized)({
+        const authorized = (0, replay_2.isNamespaceWriteAuthorized)({
             claimIdentityHash: claim.identityHash,
             claimPublicKey: claim.publicKey,
             body,
@@ -95,7 +354,7 @@ app.post("/", async (req, res) => {
         expression: body.expression || "",
         json: body,
     });
-    (0, replay_1.recordMemory)({
+    (0, replay_2.recordMemory)({
         namespace,
         payload: body,
         identityHash: blockIdentityHash,
@@ -103,7 +362,8 @@ app.post("/", async (req, res) => {
     });
     console.log("🧱 New Ledger Block:");
     console.log(JSON.stringify(entry, null, 2));
-    return res.json((0, envelope_1.createEnvelope)(target, {
+    const writeTarget = buildNormalizedTarget(req, namespace, "write", "");
+    return res.json((0, envelope_1.createEnvelope)(writeTarget, {
         blockId,
         timestamp,
     }));
@@ -224,7 +484,7 @@ app.get("/api/v1/sync", async (req, res) => {
         const username = String(req.query.username || "");
         const fingerprint = String(req.query.fingerprint || "");
         const limit = Number(req.query.limit || 2000);
-        const events = all(username, fingerprint, limit).filter(e => e.timestamp > since);
+        const events = all(username, fingerprint, limit).filter((e) => Number(e?.timestamp ?? 0) > since);
         return res.json({ events });
     }
     catch (err) {

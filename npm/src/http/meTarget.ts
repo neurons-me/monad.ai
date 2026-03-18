@@ -37,9 +37,11 @@ function inferOperation(req: express.Request): MeOperationKind {
 
 function inferNamespace(req: express.Request): string {
   const operation = inferOperation(req);
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const hinted = String(body.namespace || "").trim();
+  if (hinted) return hinted;
   if (operation === "claim" || operation === "open") {
-    const body = (req.body ?? {}) as Record<string, unknown>;
-    return String(body.namespace || "").trim() || resolveNamespace(req);
+    return resolveNamespace(req);
   }
   return resolveNamespace(req);
 }
