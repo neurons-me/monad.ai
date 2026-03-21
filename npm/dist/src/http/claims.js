@@ -47,6 +47,18 @@ function parseNamespaceIdentity(namespace) {
             effective: `@${username}.${host}`,
         };
     }
+    const dotParts = ns.split(".").filter(Boolean);
+    if (dotParts.length >= 3) {
+        const username = dotParts[0] || "";
+        const host = dotParts.slice(1).join(".");
+        if (username && host) {
+            return {
+                host,
+                username,
+                effective: `@${username}.${host}`,
+            };
+        }
+    }
     return {
         host: ns,
         username: "",
@@ -73,11 +85,15 @@ function createClaimsRouter() {
             namespace: String(body.namespace || ""),
             secret: String(body.secret || ""),
             publicKey: String(body.publicKey || "").trim() || null,
+            privateKey: String(body.privateKey || "").trim() || null,
         });
         if (!out.ok) {
             const status = out.error === "NAMESPACE_TAKEN"
                 ? 409
-                : out.error === "NAMESPACE_REQUIRED" || out.error === "SECRET_REQUIRED"
+                : out.error === "NAMESPACE_REQUIRED"
+                    || out.error === "SECRET_REQUIRED"
+                    || out.error === "CLAIM_KEY_INVALID"
+                    || out.error === "CLAIM_KEYPAIR_MISMATCH"
                     ? 400
                     : 500;
             return res.status(status).json((0, envelope_1.createErrorEnvelope)(target, { error: out.error }));
@@ -85,7 +101,9 @@ function createClaimsRouter() {
         return res.status(201).json((0, envelope_1.createEnvelope)(target, {
             namespace: out.record.namespace,
             identityHash: out.record.identityHash,
+            publicKey: out.record.publicKey,
             createdAt: out.record.createdAt,
+            persistentClaim: out.persistentClaim,
         }));
     });
     router.post("/claims/open", (req, res) => {

@@ -35,6 +35,7 @@ function normalizeTarget(target: NormalizedMeTarget) {
     operation: target.operation,
     path,
     nrp: target.nrp,
+    relation: target.relation,
   };
 }
 

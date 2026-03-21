@@ -12,6 +12,7 @@ This package exposes:
 
 ## Entry Points
 
+- [Monad vs Cleaker](./Monad-vs-Cleaker.md)
 - [Routing Spec](./nrp-routing-spec.md)
 - [Remote Exchange Spec](./nrp-remote-exchange-spec.md)
 - [API Docs](./api/README.md)

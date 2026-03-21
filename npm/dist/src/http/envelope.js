@@ -26,6 +26,7 @@ function normalizeTarget(target) {
         operation: target.operation,
         path,
         nrp: target.nrp,
+        relation: target.relation,
     };
 }
 function normalizeEnvelopeBody(body, target) {

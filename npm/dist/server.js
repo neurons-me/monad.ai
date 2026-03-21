@@ -21,14 +21,23 @@ const pathResolver_1 = require("./src/http/pathResolver");
 const claims_1 = require("./src/http/claims");
 const session_1 = require("./src/http/session");
 const legacy_1 = require("./src/http/legacy");
+const selfMapping_1 = require("./src/http/selfMapping");
 const shell_1 = require("./src/http/shell");
 const PORT = process.env.PORT || 8161;
 const NODE_HOSTNAME = os_1.default.hostname();
 const NODE_DISPLAY_NAME = `${NODE_HOSTNAME}:${PORT}`;
+const FETCH_PROXY_TIMEOUT_MS = Number(process.env.MONAD_FETCH_TIMEOUT_MS || 15000);
+const SELF_NODE_CONFIG = (0, selfMapping_1.loadSelfNodeConfig)({
+    cwd: process.cwd(),
+    env: process.env,
+    hostname: NODE_HOSTNAME,
+    port: PORT,
+});
 const app = (0, express_1.default)();
 app.set("trust proxy", true);
 app.use((0, cors_1.default)());
 app.use(express_1.default.json());
+const RESERVED_SHORT_NAMESPACES = new Set(["self", "kernel", "local"]);
 function extractNamespaceSelector(namespace) {
     const raw = String(namespace || "").trim();
     if (!raw)
@@ -78,6 +87,20 @@ function normalizeWebUrl(value) {
     if (/^https?:\/\//i.test(raw))
         return raw;
     return `https://${raw.replace(/^\/+/, "")}`;
+}
+function parseHttpFetchUrl(value) {
+    const raw = String(value || "").trim();
+    if (!raw)
+        return null;
+    try {
+        const parsed = new URL(raw);
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:")
+            return null;
+        return parsed;
+    }
+    catch {
+        return null;
+    }
 }
 function getNamespaceSelectorInfo(namespace) {
     const { base, selectorRaw } = extractNamespaceSelector(namespace);
@@ -166,6 +189,18 @@ function parseNamespaceIdentity(namespace) {
             effective: `@${username}.${host}`,
         };
     }
+    const dotParts = ns.split(".").filter(Boolean);
+    if (dotParts.length >= 3) {
+        const username = dotParts[0] || "";
+        const host = dotParts.slice(1).join(".");
+        if (username && host) {
+            return {
+                host,
+                username,
+                effective: `@${username}.${host}`,
+            };
+        }
+    }
     return {
         host: ns,
         username: "",
@@ -190,9 +225,46 @@ function normalizeOperation(input) {
     }
     return "write";
 }
-function buildBridgeTarget(resolved, requestHost, rawFallback = "") {
+function normalizeClaimableNamespace(raw) {
+    return String(raw || "").trim().toLowerCase();
+}
+function isCanonicalClaimableNamespace(namespace) {
+    const ns = normalizeClaimableNamespace(namespace);
+    if (!ns)
+        return false;
+    if (RESERVED_SHORT_NAMESPACES.has(ns))
+        return true;
+    return ns.includes(".");
+}
+function buildKernelCommandTarget(req, operation, path) {
+    const host = (0, namespace_1.resolveTransportHost)(req) || "unknown";
+    const normalizedPath = String(path || "").trim();
+    const relation = (0, namespace_1.resolveObserverRelation)(req);
+    return {
+        host,
+        namespace: "kernel",
+        operation,
+        path: normalizedPath || "_",
+        nrp: (0, meTarget_1.buildMeTargetNrp)("kernel", operation, normalizedPath || "_", relation),
+        relation,
+    };
+}
+function resolveCommandNamespace(operation, body, parsedTarget, fallbackNamespace) {
+    const bodyNamespace = normalizeClaimableNamespace(body.namespace);
+    if (bodyNamespace)
+        return bodyNamespace;
+    if ((operation === "claim" || operation === "open") && parsedTarget?.namespace === "kernel") {
+        const commandPath = normalizeClaimableNamespace(parsedTarget.pathSlash || parsedTarget.pathDot);
+        if (commandPath)
+            return commandPath;
+    }
+    return normalizeClaimableNamespace(parsedTarget?.namespace || fallbackNamespace);
+}
+function buildBridgeTarget(resolved, requestHost, relation, rawFallback = "") {
     const namespaceMe = resolved?.namespace || "unknown";
-    const nrp = resolved?.nrp || rawFallback || `me://${namespaceMe}:read/_`;
+    const nrp = resolved
+        ? (0, meTarget_1.buildMeTargetNrp)(namespaceMe, "read", resolved.pathDot || "", relation)
+        : rawFallback || (0, meTarget_1.buildMeTargetNrp)(namespaceMe, "read", "", relation);
     return {
         namespace: {
             me: namespaceMe,
@@ -201,16 +273,19 @@ function buildBridgeTarget(resolved, requestHost, rawFallback = "") {
         operation: "read",
         path: resolved?.pathDot || "",
         nrp,
+        relation,
     };
 }
 function buildNormalizedTarget(req, namespace, operation, path) {
     const host = (0, namespace_1.resolveTransportHost)(req) || "unknown";
+    const relation = (0, namespace_1.resolveObserverRelation)(req);
     return {
         host,
         namespace,
         operation,
         path,
-        nrp: `me://${namespace}:${operation}/${path || "_"}`,
+        nrp: (0, meTarget_1.buildMeTargetNrp)(namespace, operation, path, relation),
+        relation,
     };
 }
 // Serve built GUI assets from this.GUI package dist
@@ -229,20 +304,71 @@ app.get("/__bootstrap", (req, res) => {
         resolverDisplayName: NODE_DISPLAY_NAME,
     }));
 });
+app.get("/__fetch", async (req, res) => {
+    const target = (0, meTarget_1.normalizeHttpRequestToMeTarget)(req);
+    const remoteUrl = parseHttpFetchUrl(req.query?.url);
+    if (!remoteUrl) {
+        return res.status(400).json((0, envelope_1.createErrorEnvelope)(target, {
+            error: "FETCH_URL_INVALID",
+            detail: "Provide an absolute http(s) URL via ?url=",
+        }));
+    }
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), FETCH_PROXY_TIMEOUT_MS);
+    try {
+        const response = await fetch(remoteUrl.toString(), {
+            method: "GET",
+            redirect: "follow",
+            signal: controller.signal,
+            headers: {
+                accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                "user-agent": "monad.ai/1.0 this.DOM fetch proxy",
+            },
+        });
+        const contentType = String(response.headers.get("content-type") || "text/html; charset=utf-8");
+        const bodyText = await response.text();
+        return res.status(response.status).json((0, envelope_1.createEnvelope)(target, {
+            value: {
+                url: remoteUrl.toString(),
+                finalUrl: response.url || remoteUrl.toString(),
+                status: response.status,
+                ok: response.ok,
+                contentType,
+                body: bodyText,
+            },
+        }));
+    }
+    catch (error) {
+        const detail = error instanceof Error ? error.message : String(error);
+        const isTimeout = error instanceof Error && error.name === "AbortError";
+        return res.status(isTimeout ? 504 : 502).json((0, envelope_1.createErrorEnvelope)(target, {
+            error: isTimeout ? "FETCH_TIMEOUT" : "FETCH_PROXY_FAILED",
+            detail,
+            value: {
+                url: remoteUrl.toString(),
+            },
+        }));
+    }
+    finally {
+        clearTimeout(timeoutId);
+    }
+});
 const resolveBridgeHandler = async (req, res) => {
     const rawTarget = String(req.query?.target || "").trim();
     const decodedTarget = rawTarget ? decodeURIComponent(rawTarget) : "";
     const parsed = parseBridgeTarget(decodedTarget);
     const requestHost = (0, namespace_1.resolveTransportHost)(req) || NODE_HOSTNAME || "localhost";
+    const relation = (0, namespace_1.resolveObserverRelation)(req);
     if (!parsed) {
         return res.status(400).json({
             ok: false,
             operation: "read",
-            target: buildBridgeTarget(null, requestHost, decodedTarget),
+            target: buildBridgeTarget(null, requestHost, relation, decodedTarget),
             error: "TARGET_REQUIRED",
         });
     }
-    const bridgeTarget = buildBridgeTarget(parsed, requestHost, decodedTarget);
+    const bridgeTarget = buildBridgeTarget(parsed, requestHost, relation, decodedTarget);
+    let selectorDispatch = null;
     if (!parsed.pathSlash) {
         return res.status(400).json({
             ok: false,
@@ -253,13 +379,19 @@ const resolveBridgeHandler = async (req, res) => {
     }
     if (parsed.namespace.includes("[") || parsed.namespace.includes("]")) {
         const selectorInfo = getNamespaceSelectorInfo(parsed.namespace);
-        if (selectorInfo.webTarget) {
+        const dispatch = (0, selfMapping_1.resolveSelfDispatch)(selectorInfo.base, selectorInfo.selectorRaw, SELF_NODE_CONFIG);
+        selectorDispatch = dispatch;
+        if (dispatch.mode === "local") {
+            parsed.namespace = selectorInfo.base;
+        }
+        if (dispatch.mode !== "local" && selectorInfo.webTarget) {
             const webTarget = {
                 host: requestHost,
                 namespace: parsed.namespace,
                 operation: "read",
                 path: parsed.pathDot || "",
-                nrp: parsed.nrp,
+                nrp: (0, meTarget_1.buildMeTargetNrp)(parsed.namespace, "read", parsed.pathDot || "", relation),
+                relation,
             };
             try {
                 const response = await fetch(selectorInfo.webTarget, { method: "GET" });
@@ -270,30 +402,47 @@ const resolveBridgeHandler = async (req, res) => {
                     res.setHeader("Content-Type", contentType);
                     return res.status(response.status).send(bodyText);
                 }
-                return res.status(response.status).json((0, envelope_1.createEnvelope)(webTarget, {
-                    value: {
-                        url: selectorInfo.webTarget,
-                        status: response.status,
-                        contentType,
-                        body: bodyText,
-                        overlay: parsed.pathDot || "",
-                    },
-                }));
+                return res.status(response.status).json({
+                    ...(0, envelope_1.createEnvelope)(webTarget, {
+                        value: {
+                            url: selectorInfo.webTarget,
+                            status: response.status,
+                            contentType,
+                            body: bodyText,
+                            overlay: parsed.pathDot || "",
+                        },
+                    }),
+                    dispatch,
+                });
             }
             catch (error) {
-                return res.status(502).json((0, envelope_1.createErrorEnvelope)(webTarget, {
-                    error: "WEB_FETCH_FAILED",
-                    detail: error instanceof Error ? error.message : String(error),
-                }));
+                return res.status(502).json({
+                    ...(0, envelope_1.createErrorEnvelope)(webTarget, {
+                        error: "WEB_FETCH_FAILED",
+                        detail: error instanceof Error ? error.message : String(error),
+                    }),
+                    dispatch,
+                });
             }
         }
-        if (selectorInfo.hasDevice) {
+        if (dispatch.hasInstanceSelector) {
             return res.status(422).json({
                 ok: false,
                 operation: "read",
                 target: bridgeTarget,
-                error: "DEVICE_BINDING_UNRESOLVED",
-                hint: "Namespace contains device binding; resolve via netget/runtime before HTTP.",
+                dispatch,
+                error: "INSTANCE_SELECTOR_UNRESOLVED",
+                hint: "Selector targets the same identity, but this node is not the requested instance.",
+            });
+        }
+        if (selectorInfo.selectorRaw) {
+            return res.status(422).json({
+                ok: false,
+                operation: "read",
+                target: bridgeTarget,
+                dispatch,
+                error: "SELECTOR_BINDING_UNRESOLVED",
+                hint: "Namespace selector requires an instance or transport resolver before HTTP dispatch.",
             });
         }
     }
@@ -307,7 +456,20 @@ const resolveBridgeHandler = async (req, res) => {
     }
     try {
         const origin = `http://localhost:${PORT}`;
-        const url = `${origin}/${parsed.pathSlash}`;
+        const url = new URL(`/${parsed.pathSlash}`, origin);
+        for (const [key, value] of Object.entries(req.query || {})) {
+            if (key === "target")
+                continue;
+            if (Array.isArray(value)) {
+                for (const item of value) {
+                    url.searchParams.append(key, String(item));
+                }
+                continue;
+            }
+            if (typeof value !== "undefined") {
+                url.searchParams.set(key, String(value));
+            }
+        }
         const response = await fetch(url, {
             method: "GET",
             headers: {
@@ -320,8 +482,18 @@ const resolveBridgeHandler = async (req, res) => {
         if (contentType.includes("application/json")) {
             const payload = await response.json();
             const patched = payload && typeof payload === "object"
-                ? { ...payload, target: bridgeTarget }
-                : { ok: response.ok, operation: "read", target: bridgeTarget, value: payload };
+                ? {
+                    ...payload,
+                    target: bridgeTarget,
+                    ...(selectorDispatch ? { dispatch: selectorDispatch } : {}),
+                }
+                : {
+                    ok: response.ok,
+                    operation: "read",
+                    target: bridgeTarget,
+                    value: payload,
+                    ...(selectorDispatch ? { dispatch: selectorDispatch } : {}),
+                };
             return res.status(response.status).json(patched);
         }
         const text = await response.text();
@@ -340,6 +512,105 @@ const resolveBridgeHandler = async (req, res) => {
 // --- Local Bridge: me:// -> http://localhost:<port>/resolve?target=...
 // Allows browser testing of me:// targets without registering a protocol handler.
 app.get("/resolve", resolveBridgeHandler);
+app.post("/me/*", async (req, res) => {
+    const rawTarget = decodeURIComponent(String(req.params[0] || "").trim());
+    const parsedTarget = parseBridgeTarget(rawTarget.startsWith("me://") ? rawTarget : `me://${rawTarget}`);
+    if (!parsedTarget) {
+        const target = buildKernelCommandTarget(req, "claim", "");
+        return res.status(400).json((0, envelope_1.createErrorEnvelope)(target, {
+            error: "TARGET_REQUIRED",
+            detail: "Expected a me target after /me/.",
+        }));
+    }
+    if (parsedTarget.namespace !== "kernel" || (parsedTarget.selector !== "claim" && parsedTarget.selector !== "open")) {
+        const target = buildKernelCommandTarget(req, parsedTarget.selector === "open" ? "open" : "claim", parsedTarget.pathSlash || parsedTarget.pathDot);
+        return res.status(501).json((0, envelope_1.createErrorEnvelope)(target, {
+            error: "KERNEL_COMMAND_UNSUPPORTED",
+            detail: "Only kernel claim/open commands are implemented on /me/* for now.",
+        }));
+    }
+    const operation = parsedTarget.selector;
+    const body = (req.body ?? {});
+    const namespace = normalizeClaimableNamespace(body.namespace || parsedTarget.pathSlash || parsedTarget.pathDot);
+    const target = buildKernelCommandTarget(req, operation, namespace);
+    if (!namespace) {
+        return res.status(400).json((0, envelope_1.createErrorEnvelope)(target, {
+            error: "NAMESPACE_REQUIRED",
+        }));
+    }
+    if (!isCanonicalClaimableNamespace(namespace)) {
+        return res.status(400).json((0, envelope_1.createErrorEnvelope)(target, {
+            error: "FULL_NAMESPACE_REQUIRED",
+            detail: "Public claims should use a full namespace such as username.cleaker.me.",
+        }));
+    }
+    if (operation === "claim") {
+        const out = (0, records_1.claimNamespace)({
+            namespace,
+            secret: String(body.secret || ""),
+            publicKey: String(body.publicKey || "").trim() || null,
+            privateKey: String(body.privateKey || "").trim() || null,
+        });
+        if (!out.ok) {
+            const status = out.error === "NAMESPACE_TAKEN"
+                ? 409
+                : out.error === "NAMESPACE_REQUIRED"
+                    || out.error === "SECRET_REQUIRED"
+                    || out.error === "CLAIM_KEY_INVALID"
+                    || out.error === "CLAIM_KEYPAIR_MISMATCH"
+                    ? 400
+                    : 500;
+            return res.status(status).json((0, envelope_1.createErrorEnvelope)(target, { error: out.error }));
+        }
+        return res.status(201).json((0, envelope_1.createEnvelope)(target, {
+            namespace: out.record.namespace,
+            identityHash: out.record.identityHash,
+            publicKey: out.record.publicKey,
+            createdAt: out.record.createdAt,
+            persistentClaim: out.persistentClaim,
+        }));
+    }
+    const out = (0, records_1.openNamespace)({
+        namespace,
+        secret: String(body.secret || ""),
+    });
+    if (!out.ok) {
+        const status = out.error === "CLAIM_NOT_FOUND"
+            ? 404
+            : out.error === "CLAIM_VERIFICATION_FAILED"
+                ? 403
+                : out.error === "NAMESPACE_REQUIRED" || out.error === "SECRET_REQUIRED"
+                    ? 400
+                    : 500;
+        return res.status(status).json((0, envelope_1.createErrorEnvelope)(target, { error: out.error }));
+    }
+    const memories = (0, replay_1.getMemoriesForNamespace)(out.record.namespace);
+    const openedAt = Date.now();
+    const policy = getDefaultReadPolicy(out.record.namespace);
+    const identity = parseNamespaceIdentity(out.record.namespace);
+    const audit = {
+        proofId: computeProofId({
+            namespace: out.record.namespace,
+            identityHash: out.record.identityHash,
+            noise: out.noise,
+            memories,
+        }),
+        openedAt,
+    };
+    return res.json((0, envelope_1.createEnvelope)(target, {
+        verified: true,
+        reasonCode: null,
+        reason: null,
+        identity,
+        policy,
+        audit,
+        namespace: out.record.namespace,
+        identityHash: out.record.identityHash,
+        noise: out.noise,
+        memories,
+        openedAt,
+    }));
+});
 // HTML shell for root and any deep route when Accept: text/html
 app.get("/", (req, res, next) => {
     if (req.query?.target) {
@@ -354,8 +625,8 @@ app.get("/", (req, res, next) => {
 app.use((req, _res, next) => {
     const transportHost = (0, namespace_1.resolveTransportHost)(req);
     const forwardedHost = (0, namespace_1.resolveHostNamespace)(req);
-    const lens = (0, namespace_1.resolveLens)(req);
     const target = (0, meTarget_1.normalizeHttpRequestToMeTarget)(req);
+    const lens = (0, namespace_1.formatObserverRelationLabel)(target.relation);
     const forwardedSuffix = forwardedHost && forwardedHost !== transportHost
         ? ` xf=${forwardedHost}`
         : "";
@@ -370,23 +641,36 @@ app.post("/", async (req, res) => {
     const rawTarget = String(body?.target || req.query?.target || "").trim();
     const parsedTarget = rawTarget ? parseBridgeTarget(rawTarget) : null;
     const operation = normalizeOperation(body?.operation || body?.op || parsedTarget?.selector);
-    const resolvedNamespace = String(body?.namespace || parsedTarget?.namespace || (0, namespace_1.resolveNamespace)(req));
+    const resolvedNamespace = resolveCommandNamespace(operation, (body ?? {}), parsedTarget, (0, namespace_1.resolveNamespace)(req));
+    const commandTarget = (operation === "claim" || operation === "open") && parsedTarget?.namespace === "kernel"
+        ? buildKernelCommandTarget(req, operation, resolvedNamespace)
+        : null;
     if (!body || typeof body !== "object") {
         return res.status(400).json((0, envelope_1.createErrorEnvelope)(target, {
             error: "Expected JSON block in request body",
         }));
     }
     if (operation === "claim") {
+        if (commandTarget && !isCanonicalClaimableNamespace(resolvedNamespace)) {
+            return res.status(400).json((0, envelope_1.createErrorEnvelope)(commandTarget, {
+                error: "FULL_NAMESPACE_REQUIRED",
+                detail: "Public claims should use a full namespace such as username.cleaker.me.",
+            }));
+        }
         const out = (0, records_1.claimNamespace)({
             namespace: resolvedNamespace,
             secret: String(body?.secret || ""),
             publicKey: String(body?.publicKey || "").trim() || null,
+            privateKey: String(body?.privateKey || "").trim() || null,
         });
-        const claimTarget = buildNormalizedTarget(req, resolvedNamespace, "claim", "");
+        const claimTarget = commandTarget || buildNormalizedTarget(req, resolvedNamespace, "claim", "");
         if (!out.ok) {
             const status = out.error === "NAMESPACE_TAKEN"
                 ? 409
-                : out.error === "NAMESPACE_REQUIRED" || out.error === "SECRET_REQUIRED"
+                : out.error === "NAMESPACE_REQUIRED"
+                    || out.error === "SECRET_REQUIRED"
+                    || out.error === "CLAIM_KEY_INVALID"
+                    || out.error === "CLAIM_KEYPAIR_MISMATCH"
                     ? 400
                     : 500;
             return res.status(status).json((0, envelope_1.createErrorEnvelope)(claimTarget, { error: out.error }));
@@ -394,15 +678,23 @@ app.post("/", async (req, res) => {
         return res.status(201).json((0, envelope_1.createEnvelope)(claimTarget, {
             namespace: out.record.namespace,
             identityHash: out.record.identityHash,
+            publicKey: out.record.publicKey,
             createdAt: out.record.createdAt,
+            persistentClaim: out.persistentClaim,
         }));
     }
     if (operation === "open") {
+        if (commandTarget && !isCanonicalClaimableNamespace(resolvedNamespace)) {
+            return res.status(400).json((0, envelope_1.createErrorEnvelope)(commandTarget, {
+                error: "FULL_NAMESPACE_REQUIRED",
+                detail: "Public opens should use a full namespace such as username.cleaker.me.",
+            }));
+        }
         const out = (0, records_1.openNamespace)({
             namespace: resolvedNamespace,
             secret: String(body?.secret || ""),
         });
-        const openTarget = buildNormalizedTarget(req, resolvedNamespace, "open", "");
+        const openTarget = commandTarget || buildNormalizedTarget(req, resolvedNamespace, "open", "");
         if (!out.ok) {
             const status = out.error === "CLAIM_NOT_FOUND"
                 ? 404
@@ -484,8 +776,8 @@ app.post("/", async (req, res) => {
 // --- Universal Ledger Read Surface ----------------------
 app.get("/", async (req, res) => {
     const chainNs = (0, namespace_1.resolveNamespace)(req);
-    const lens = (0, namespace_1.resolveLens)(req);
     const target = (0, meTarget_1.normalizeHttpRequestToMeTarget)(req);
+    const lens = (0, namespace_1.formatObserverRelationLabel)(target.relation);
     const limit = Math.max(1, Math.min(5000, Number(req.query?.limit ?? 5000)));
     const identityHash = String(req.query?.identityHash || "").trim();
     const all = await (0, blockchain_1.getAllBlocks)();
@@ -512,8 +804,8 @@ app.get("/blocks", async (req, res) => {
     // Delegate by rewriting url semantics in place
     // (Keep implementation simple by copying the same logic.)
     const ns = (0, namespace_1.resolveNamespace)(req);
-    const lens = (0, namespace_1.resolveLens)(req);
     const target = (0, meTarget_1.normalizeHttpRequestToMeTarget)(req);
+    const lens = (0, namespace_1.formatObserverRelationLabel)(target.relation);
     const limit = Math.max(1, Math.min(5000, Number(req.query?.limit ?? 5000)));
     const identityHash = String(req.query?.identityHash || "").trim();
     const all = await (0, blockchain_1.getAllBlocks)();
@@ -536,8 +828,8 @@ app.get("/blocks", async (req, res) => {
 // NOTE: This MUST be defined before the catch-all path resolver.
 app.get("/@*", async (req, res) => {
     const chainNs = (0, namespace_1.resolveNamespace)(req);
-    const lens = (0, namespace_1.resolveLens)(req);
     const target = (0, meTarget_1.normalizeHttpRequestToMeTarget)(req);
+    const lens = (0, namespace_1.formatObserverRelationLabel)(target.relation);
     const limit = Math.max(1, Math.min(5000, Number(req.query?.limit ?? 5000)));
     const identityHash = String(req.query?.identityHash || "").trim();
     const all = await (0, blockchain_1.getAllBlocks)();
@@ -627,16 +919,29 @@ app.listen(PORT, () => {
     console.log("\n🔐 Claim Surface");
     console.log("  - Claim space:    POST /claims       (forge claim record + encrypted noise)");
     console.log("  - Open space:     POST /claims/open  (verify trinity -> recover noise)");
+    console.log("  - Kernel claim:   POST /me/kernel:claim/<full-namespace>");
+    console.log("  - Kernel open:    POST /me/kernel:open/<full-namespace>");
     console.log("\n🌐 Routing / Namespaces");
     console.log("  - Host header determines the chain namespace");
     console.log("  - Examples:");
-    console.log("    • cleaker.me                 -> cleaker.me");
-    console.log("    • username.cleaker.me        -> cleaker.me/users/username");
-    console.log("    • username.localhost         -> localhost/users/username");
-    console.log("    • cleaker.me/@username        -> cleaker.me/users/username (path-based)");
-    console.log("    • localhost/@username         -> localhost/users/username (path-based)");
-    console.log("    • cleaker.me/@a+b             -> cleaker.me/relations/a+b (symmetric relation)");
-    console.log("    • cleaker.me/@a/@b            -> cleaker.me/users/a/users/b (directional nesting)");
+    console.log("    • cleaker.me                  -> cleaker.me");
+    console.log("    • username.cleaker.me         -> username.cleaker.me");
+    console.log("    • username.localhost          -> username.localhost");
+    console.log("    • cleaker.me/@username        -> username.cleaker.me (path projection)");
+    console.log("    • localhost/@username         -> username.localhost (path projection)");
+    console.log("    • cleaker.me/@a+b             -> cleaker.me (relation stays semantic, no DNS projection)");
+    console.log("    • cleaker.me/@a/@b            -> a.cleaker.me (target projects, relation stays semantic)");
+    console.log("    • ana.cleaker.me/profile?as=bella -> target=ana.cleaker.me, observer=bella.cleaker.me");
+    if (SELF_NODE_CONFIG) {
+        console.log("    • me://ana.cleaker.me[macbook]:read/profile -> local if selector matches this node tags");
+    }
+    if (SELF_NODE_CONFIG) {
+        console.log("\n🪞 Self Mapping");
+        console.log(`  - Identity:       ${SELF_NODE_CONFIG.identity}`);
+        console.log(`  - Tags:           ${SELF_NODE_CONFIG.tags.join(", ") || "(none)"}`);
+        console.log(`  - Endpoint:       ${SELF_NODE_CONFIG.endpoint}`);
+        console.log(`  - Config Path:    ${SELF_NODE_CONFIG.configPath}`);
+    }
     console.log("\n🔎 Namespace Reads");
     console.log("  - Resolve path:   GET  /<any/path>   e.g. /profile/displayName");
     console.log("    (Resolves within the chain namespace derived from host)");

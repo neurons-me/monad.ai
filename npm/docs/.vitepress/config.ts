@@ -10,6 +10,7 @@ export default defineConfig({
   themeConfig: {
     nav: [
       { text: 'Guide', link: '/' },
+      { text: 'Architecture', link: '/Monad-vs-Cleaker' },
       { text: 'Routing', link: '/nrp-routing-spec' },
       { text: 'Exchange', link: '/nrp-remote-exchange-spec' },
       { text: 'API', link: '/api/' },
@@ -19,6 +20,7 @@ export default defineConfig({
         text: 'Guide',
         items: [
           { text: 'Overview', link: '/' },
+          { text: 'Monad vs Cleaker', link: '/Monad-vs-Cleaker' },
           { text: 'Routing Spec', link: '/nrp-routing-spec' },
           { text: 'Remote Exchange Spec', link: '/nrp-remote-exchange-spec' },
         ],

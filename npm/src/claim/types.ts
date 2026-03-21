@@ -2,6 +2,7 @@ export type NamespaceClaimInput = {
   namespace: string;
   secret: string;
   publicKey?: string | null;
+  privateKey?: string | null;
 };
 
 export type NamespaceOpenInput = {
@@ -18,14 +19,48 @@ export type ClaimRecord = {
   updatedAt: number;
 };
 
+export type PersistentClaimKeySource = "provided" | "generated" | "stored";
+
+export type PersistentClaimPublicKey = {
+  kid: string;
+  alg: string;
+  key: string;
+  source: PersistentClaimKeySource;
+};
+
+export type PersistentClaimSignature = {
+  alg: string;
+  value: string;
+  encoding: "base64";
+};
+
+export type PersistentClaimRecord = {
+  kind: "PersistentClaimV1";
+  version: 1;
+  namespace: string;
+  identityHash: string;
+  publicKey: PersistentClaimPublicKey;
+  proofKey: PersistentClaimPublicKey;
+  issuedAt: number;
+  signature: PersistentClaimSignature;
+};
+
+export type PersistentClaimSummary = {
+  claimPath: string;
+  claim: PersistentClaimRecord;
+};
+
 export type ClaimNamespaceResult =
-  | { ok: true; record: ClaimRecord; noise: string }
+  | { ok: true; record: ClaimRecord; noise: string; persistentClaim: PersistentClaimSummary }
   | {
       ok: false;
       error:
         | "NAMESPACE_REQUIRED"
         | "SECRET_REQUIRED"
-        | "NAMESPACE_TAKEN";
+        | "NAMESPACE_TAKEN"
+        | "CLAIM_KEY_INVALID"
+        | "CLAIM_KEYPAIR_MISMATCH"
+        | "CLAIM_PERSIST_FAILED";
     };
 
 export type OpenNamespaceResult =

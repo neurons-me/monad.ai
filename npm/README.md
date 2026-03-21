@@ -133,6 +133,27 @@ The current routing direction for `.me`, `nrp`, and the HTTP server is documente
 
 ---
 
+## Monad vs Cleaker
+
+This package is the daemon host. It is not the same thing as `cleaker`, even though they overlap in practice.
+
+- `.me` is the semantic kernel
+- `monad.ai` is the daemon that runs it
+- `cleaker` is the ledger interface and public semantic network layer
+- `cleaker.me` is the canonical public root running that role
+
+In short:
+
+- `.me` thinks in spaces
+- `cleaker` ledgerizes and hydrates spaces
+- `monad.ai` hosts and serves spaces
+
+See the architecture note here:
+
+- [docs/Monad-vs-Cleaker.md](/Users/suign/Desktop/Neuroverse/neurons.me/core/monad.ai/npm/docs/Monad-vs-Cleaker.md)
+
+---
+
 ## Next Concrete Steps
 
 1. Extract the engine into explicit modules:

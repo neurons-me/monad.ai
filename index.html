@@ -141,274 +141,463 @@
       </div>
     </div>
     <script>
-      const SOURCE_STORAGE_KEY = 'monad.runtime.sources.v1';
-      const defaults = { gui: 'cdn', cleaker: 'cdn', me: 'cdn' };
-      const guiSelect = document.getElementById('gui-source');
-      const cleakerSelect = document.getElementById('cleaker-source');
-      const meSelect = document.getElementById('me-source');
-      const statusEls = {
-        guiBox: document.getElementById('runtime-gui-box'),
-        guiState: document.getElementById('runtime-gui-state'),
-        guiUrl: document.getElementById('runtime-gui-url'),
-        guiToggle: document.getElementById('runtime-gui-toggle'),
-        cleakerBox: document.getElementById('runtime-cleaker-box'),
-        cleakerState: document.getElementById('runtime-cleaker-state'),
-        cleakerUrl: document.getElementById('runtime-cleaker-url'),
-        cleakerToggle: document.getElementById('runtime-cleaker-toggle'),
-        meBox: document.getElementById('runtime-me-box'),
-        meState: document.getElementById('runtime-me-state'),
-        meUrl: document.getElementById('runtime-me-url'),
-        meToggle: document.getElementById('runtime-me-toggle'),
-      };
+      (async function () {
+        const SOURCE_STORAGE_KEY = 'monad.runtime.sources.v2';
+        const THIS_GUI_STABLE_VERSION = '1.4.89';
+        const THIS_ME_CDN_VERSION = '3.4.7';
+        const CLEAKER_CDN_VERSION = '3.0.4';
+        const REACT_CDN_VERSION = '18.3.1';
+        const REACTDOM_CDN_VERSION = '18.3.1';
+        const GUI_LATEST_META_URL = 'https://registry.npmjs.org/this.gui/latest';
+        const REMOTE_ASSET_TIMEOUT_MS = 8000;
+        const IS_FILE_ORIGIN = window.location.protocol === 'file:';
+        const defaultSource = IS_FILE_ORIGIN ? 'local' : 'cdn';
+        const defaults = {
+          gui: defaultSource,
+          cleaker: defaultSource,
+          me: defaultSource,
+        };
 
-      const LOCAL_GUI_CSS = '../../this/GUI/npm/dist/styles.css';
-      const LOCAL_GUI_BOOTSTRAP = '../../this/GUI/npm/dist/this.gui.umd.js';
-      const LOCAL_REACT_UMD = '../../this/GUI/npm/node_modules/react/umd/react.production.min.js';
-      const LOCAL_REACTDOM_UMD = '../../this/GUI/npm/node_modules/react-dom/umd/react-dom.production.min.js';
-      const LOCAL_ME_UMD = '../../this/.me/npm/dist/me.umd.js';
-      const LOCAL_CLEAKER_UMD = '../cleaker/npm/dist/cleaker.umd.js';
-      const CDN_GUI_CSS = 'https://cdn.jsdelivr.net/npm/this.gui@latest/dist/styles.css';
-      const CDN_GUI_BOOTSTRAP = 'https://cdn.jsdelivr.net/npm/this.gui@latest/dist/this.gui.umd.js';
-      const CDN_REACT_UMD = 'https://cdn.jsdelivr.net/npm/react@18/umd/react.production.min.js';
-      const CDN_REACTDOM_UMD = 'https://cdn.jsdelivr.net/npm/react-dom@18/umd/react-dom.production.min.js';
-      const CDN_ME_UMD = 'https://cdn.jsdelivr.net/npm/this.me@latest/dist/me.umd.js';
-      const CDN_CLEAKER_UMD = 'https://cdn.jsdelivr.net/npm/cleaker@latest/dist/cleaker.umd.js';
-      const loaded = new Set();
-      function resolveAssetUrl(source, localUrl, cdnUrl) {
-        return source === 'cdn' ? cdnUrl : localUrl;
-      }
+        const controls = {
+          gui: document.getElementById('gui-source'),
+          cleaker: document.getElementById('cleaker-source'),
+          me: document.getElementById('me-source'),
+        };
+        const statusEls = {
+          guiBox: document.getElementById('runtime-gui-box'),
+          guiState: document.getElementById('runtime-gui-state'),
+          guiUrl: document.getElementById('runtime-gui-url'),
+          guiToggle: document.getElementById('runtime-gui-toggle'),
+          cleakerBox: document.getElementById('runtime-cleaker-box'),
+          cleakerState: document.getElementById('runtime-cleaker-state'),
+          cleakerUrl: document.getElementById('runtime-cleaker-url'),
+          cleakerToggle: document.getElementById('runtime-cleaker-toggle'),
+          meBox: document.getElementById('runtime-me-box'),
+          meState: document.getElementById('runtime-me-state'),
+          meUrl: document.getElementById('runtime-me-url'),
+          meToggle: document.getElementById('runtime-me-toggle'),
+        };
 
-      function formatRuntimeDetail(version, url) {
-        const shortUrl = String(url || '').replace(window.location.origin, '');
-        return version ? ('v' + version + ' · ' + shortUrl) : shortUrl;
-      }
+        const LOCAL_GUI_CSS = '../../this/GUI/npm/dist/styles.css';
+        const LOCAL_GUI_BOOTSTRAP = '../../this/GUI/npm/dist/this.gui.umd.js';
+        const LOCAL_REACT_UMD = '../../this/GUI/npm/node_modules/react/umd/react.production.min.js';
+        const LOCAL_REACTDOM_UMD = '../../this/GUI/npm/node_modules/react-dom/umd/react-dom.production.min.js';
+        const LOCAL_ME_UMD = '../../this/.me/npm/dist/me.umd.js';
+        const LOCAL_CLEAKER_UMD = '../cleaker/npm/dist/cleaker.umd.js';
+        const CDN_GUI_CSS = 'https://cdn.jsdelivr.net/npm/this.gui@' + THIS_GUI_STABLE_VERSION + '/dist/styles.css';
+        const CDN_GUI_BOOTSTRAP = 'https://cdn.jsdelivr.net/npm/this.gui@' + THIS_GUI_STABLE_VERSION + '/dist/this.gui.umd.js';
+        const CDN_REACT_UMD = 'https://cdn.jsdelivr.net/npm/react@' + REACT_CDN_VERSION + '/umd/react.production.min.js';
+        const CDN_REACTDOM_UMD = 'https://cdn.jsdelivr.net/npm/react-dom@' + REACTDOM_CDN_VERSION + '/umd/react-dom.production.min.js';
+        const CDN_ME_UMD = 'https://cdn.jsdelivr.net/npm/this.me@' + THIS_ME_CDN_VERSION + '/dist/me.umd.js';
+        const CDN_CLEAKER_UMD = 'https://cdn.jsdelivr.net/npm/cleaker@' + CLEAKER_CDN_VERSION + '/dist/cleaker.umd.js';
 
-      function getVersionLabel(which, source) {
-        if (which === 'gui') {
-          if (source === 'cdn') return 'latest';
-          return (window.GUI && window.GUI.version) || 'latest';
-        }
-        return 'latest';
-      }
+        const loaded = new Set();
+        let guiLatestAssetsPromise = null;
 
-      function setStatus(which, state, url, version) {
-        const boxEl = statusEls[which + 'Box'];
-        const stateEl = statusEls[which + 'State'];
-        const urlEl = statusEls[which + 'Url'];
-        const toggleEl = statusEls[which + 'Toggle'];
-        if (boxEl) {
-          boxEl.classList.remove('state-pending', 'state-loaded', 'state-notfound');
-          boxEl.classList.add('state-' + state);
-        }
-        if (stateEl) {
-          stateEl.textContent = state === 'loaded'
-            ? 'Loaded'
-            : state === 'notfound'
-            ? 'NotFound'
-            : 'Pending';
-          stateEl.className = 'state ' + state;
-        }
-        if (urlEl) {
-          const full = formatRuntimeDetail(version, url || '-');
-          const isLong = full.length > 36;
-          const short = isLong
-            ? `${full.slice(0, 14)}…${full.slice(-10)}`
-            : full;
-          urlEl.textContent = short;
-          urlEl.title = full;
-          urlEl.dataset.full = full;
-          urlEl.dataset.short = short;
-          urlEl.dataset.expanded = 'false';
-          if (toggleEl) {
-            toggleEl.hidden = !isLong;
-            toggleEl.textContent = 'expand';
+        function resolveAssetUrl(source, localUrl, cdnUrl) {
+          const target = source === 'cdn' ? cdnUrl : localUrl;
+          try {
+            return new URL(target, window.location.href).href;
+          } catch (_) {
+            return target;
           }
         }
-      }
 
-      function bindToggle(which) {
-        const urlEl = statusEls[which + 'Url'];
-        const toggleEl = statusEls[which + 'Toggle'];
-        if (!urlEl || !toggleEl) return;
-        toggleEl.addEventListener('click', () => {
-          const expanded = urlEl.dataset.expanded === 'true';
-          urlEl.textContent = expanded ? urlEl.dataset.short || '-' : urlEl.dataset.full || '-';
-          urlEl.dataset.expanded = expanded ? 'false' : 'true';
-          toggleEl.textContent = expanded ? 'expand' : 'collapse';
-        });
-      }
+        function formatRuntimeDetail(version, url) {
+          const origin = window.location.origin && window.location.origin !== 'null'
+            ? window.location.origin
+            : '';
+          const shortUrl = String(url || '').replace(origin, '');
+          return version ? ('v' + version + ' · ' + shortUrl) : shortUrl;
+        }
 
-      function loadAsset(url, type) {
-        return new Promise((resolve, reject) => {
-          if (loaded.has(url)) return resolve();
-          let el;
-          if (type === 'style') {
-            el = document.createElement('link');
-            el.rel = 'stylesheet';
-            el.href = url;
-          } else {
-            el = document.createElement('script');
-            el.src = url;
-            el.async = true;
+        function setStatus(which, state, url, version) {
+          const boxEl = statusEls[which + 'Box'];
+          const stateEl = statusEls[which + 'State'];
+          const urlEl = statusEls[which + 'Url'];
+          const toggleEl = statusEls[which + 'Toggle'];
+          if (boxEl) {
+            boxEl.classList.remove('state-pending', 'state-loaded', 'state-notfound');
+            boxEl.classList.add('state-' + state);
           }
-          el.onload = () => {
-            loaded.add(url);
-            resolve();
-          };
-          el.onerror = (err) => reject(err);
-          document.head.appendChild(el);
-        });
-      }
-
-      async function ensureReactRuntime(source) {
-        if (window.React && window.ReactDOM) return;
-        const reactUrl = resolveAssetUrl(source, LOCAL_REACT_UMD, CDN_REACT_UMD);
-        const reactDomUrl = resolveAssetUrl(source, LOCAL_REACTDOM_UMD, CDN_REACTDOM_UMD);
-        await loadAsset(reactUrl, 'script');
-        await loadAsset(reactDomUrl, 'script');
-      }
-
-      function readSources() {
-        try {
-          const parsed = JSON.parse(localStorage.getItem(SOURCE_STORAGE_KEY) || '{}');
-          return {
-            gui: parsed.gui === 'cdn' ? 'cdn' : defaults.gui,
-            cleaker: parsed.cleaker === 'cdn' ? 'cdn' : defaults.cleaker,
-            me: parsed.me === 'cdn' ? 'cdn' : defaults.me,
-          };
-        } catch {
-          return { ...defaults };
-        }
-      }
-
-      function writeSources(next) {
-        try {
-          localStorage.setItem(SOURCE_STORAGE_KEY, JSON.stringify(next));
-        } catch {
-          // ignore
-        }
-      }
-
-      function syncUi() {
-        const saved = readSources();
-        guiSelect.value = saved.gui;
-        cleakerSelect.value = saved.cleaker;
-        meSelect.value = saved.me;
-      }
-
-      function updateResolvedUrls() {
-        const sources = readSources();
-        setStatus(
-          'gui',
-          'pending',
-          resolveAssetUrl(sources.gui, LOCAL_GUI_BOOTSTRAP, CDN_GUI_BOOTSTRAP),
-          getVersionLabel('gui', sources.gui)
-        );
-        setStatus(
-          'cleaker',
-          'pending',
-          resolveAssetUrl(sources.cleaker, LOCAL_CLEAKER_UMD, CDN_CLEAKER_UMD),
-          getVersionLabel('cleaker', sources.cleaker)
-        );
-        setStatus(
-          'me',
-          'pending',
-          resolveAssetUrl(sources.me, LOCAL_ME_UMD, CDN_ME_UMD),
-          getVersionLabel('me', sources.me)
-        );
-      }
-
-      async function loadGui(source) {
-        const primaryUrl = resolveAssetUrl(source, LOCAL_GUI_BOOTSTRAP, CDN_GUI_BOOTSTRAP);
-        const fallbackSource = source === 'local' ? 'cdn' : source;
-        const fallbackUrl = resolveAssetUrl(fallbackSource, LOCAL_GUI_BOOTSTRAP, CDN_GUI_BOOTSTRAP);
-        setStatus('gui', 'pending', primaryUrl, getVersionLabel('gui', source));
-        try {
-          await ensureReactRuntime(source);
-          await loadAsset(resolveAssetUrl(source, LOCAL_GUI_CSS, CDN_GUI_CSS), 'style');
-          await loadAsset(primaryUrl, 'script');
-          setStatus('gui', 'loaded', primaryUrl, (window.GUI && window.GUI.version) || getVersionLabel('gui', source));
-        } catch {
-          if (source === 'local') {
-            try {
-              await ensureReactRuntime('cdn');
-              await loadAsset(CDN_GUI_CSS, 'style');
-              await loadAsset(fallbackUrl, 'script');
-              setStatus('gui', 'loaded', fallbackUrl, (window.GUI && window.GUI.version) || getVersionLabel('gui', 'cdn'));
-              return;
-            } catch {
-              // fall through to notfound
+          if (stateEl) {
+            stateEl.textContent = state === 'loaded'
+              ? 'Loaded'
+              : state === 'notfound'
+              ? 'NotFound'
+              : 'Pending';
+            stateEl.className = 'state ' + state;
+          }
+          if (urlEl) {
+            const full = formatRuntimeDetail(version, url || '-');
+            const isLong = full.length > 36;
+            const short = isLong
+              ? full.slice(0, 14) + '…' + full.slice(-10)
+              : full;
+            urlEl.textContent = short;
+            urlEl.title = full;
+            urlEl.dataset.full = full;
+            urlEl.dataset.short = short;
+            urlEl.dataset.expanded = 'false';
+            if (toggleEl) {
+              toggleEl.hidden = !isLong;
+              toggleEl.textContent = 'expand';
             }
           }
-          setStatus('gui', 'notfound', fallbackUrl, getVersionLabel('gui', fallbackSource));
         }
-      }
 
-      async function loadMe(source) {
-        const primaryUrl = resolveAssetUrl(source, LOCAL_ME_UMD, CDN_ME_UMD);
-        const fallbackSource = source === 'local' ? 'cdn' : source;
-        const fallbackUrl = resolveAssetUrl(fallbackSource, LOCAL_ME_UMD, CDN_ME_UMD);
-        setStatus('me', 'pending', primaryUrl, getVersionLabel('me', source));
-        try {
-          await loadAsset(primaryUrl, 'script');
-          setStatus('me', 'loaded', primaryUrl, getVersionLabel('me', source));
-        } catch {
-          if (source === 'local') {
-            try {
-              await loadAsset(fallbackUrl, 'script');
-              setStatus('me', 'loaded', fallbackUrl, getVersionLabel('me', 'cdn'));
-              return;
-            } catch {
-              // fall through to notfound
-            }
-          }
-          setStatus('me', 'notfound', fallbackUrl, getVersionLabel('me', fallbackSource));
-        }
-      }
-
-      async function loadCleaker(source) {
-        const primaryUrl = resolveAssetUrl(source, LOCAL_CLEAKER_UMD, CDN_CLEAKER_UMD);
-        const fallbackSource = source === 'local' ? 'cdn' : source;
-        const fallbackUrl = resolveAssetUrl(fallbackSource, LOCAL_CLEAKER_UMD, CDN_CLEAKER_UMD);
-        setStatus('cleaker', 'pending', primaryUrl, getVersionLabel('cleaker', source));
-        try {
-          await loadAsset(primaryUrl, 'script');
-          setStatus('cleaker', 'loaded', primaryUrl, getVersionLabel('cleaker', source));
-        } catch {
-          if (source === 'local') {
-            try {
-              await loadAsset(fallbackUrl, 'script');
-              setStatus('cleaker', 'loaded', fallbackUrl, getVersionLabel('cleaker', 'cdn'));
-              return;
-            } catch {
-              // fall through to notfound
-            }
-          }
-          setStatus('cleaker', 'notfound', fallbackUrl, getVersionLabel('cleaker', fallbackSource));
-        }
-      }
-
-      [guiSelect, cleakerSelect, meSelect].forEach((el) => {
-        el.addEventListener('change', () => {
-          writeSources({
-            gui: guiSelect.value,
-            cleaker: cleakerSelect.value,
-            me: meSelect.value,
+        function bindToggle(which) {
+          const urlEl = statusEls[which + 'Url'];
+          const toggleEl = statusEls[which + 'Toggle'];
+          if (!urlEl || !toggleEl) return;
+          toggleEl.addEventListener('click', function () {
+            const expanded = urlEl.dataset.expanded === 'true';
+            urlEl.textContent = expanded ? (urlEl.dataset.short || '-') : (urlEl.dataset.full || '-');
+            urlEl.dataset.expanded = expanded ? 'false' : 'true';
+            toggleEl.textContent = expanded ? 'expand' : 'collapse';
           });
-          if (el === guiSelect) loadGui(guiSelect.value);
-          if (el === cleakerSelect) loadCleaker(cleakerSelect.value);
-          if (el === meSelect) loadMe(meSelect.value);
-        });
-      });
+        }
 
-      syncUi();
-      updateResolvedUrls();
-      bindToggle('gui');
-      bindToggle('cleaker');
-      bindToggle('me');
-      loadGui(guiSelect.value);
-      loadCleaker(cleakerSelect.value);
-      loadMe(meSelect.value);
+        function readSources() {
+          try {
+            const parsed = JSON.parse(localStorage.getItem(SOURCE_STORAGE_KEY) || '{}');
+            const normalizeSource = function (value) {
+              return value === 'local' || value === 'cdn' ? value : defaultSource;
+            };
+            return {
+              gui: normalizeSource(parsed.gui),
+              cleaker: normalizeSource(parsed.cleaker),
+              me: normalizeSource(parsed.me),
+            };
+          } catch (_) {
+            return { ...defaults };
+          }
+        }
+
+        function writeSources(next) {
+          try {
+            localStorage.setItem(SOURCE_STORAGE_KEY, JSON.stringify(next));
+          } catch (_) {}
+        }
+
+        function syncUi() {
+          const saved = readSources();
+          controls.gui.value = saved.gui;
+          controls.cleaker.value = saved.cleaker;
+          controls.me.value = saved.me;
+        }
+
+        function updateResolvedUrls() {
+          const sources = readSources();
+          setStatus('gui', 'pending', resolveAssetUrl(sources.gui, LOCAL_GUI_BOOTSTRAP, CDN_GUI_BOOTSTRAP), sources.gui === 'cdn' ? 'latest' : null);
+          setStatus('cleaker', 'pending', resolveAssetUrl(sources.cleaker, LOCAL_CLEAKER_UMD, CDN_CLEAKER_UMD), sources.cleaker === 'cdn' ? CLEAKER_CDN_VERSION : null);
+          setStatus('me', 'pending', resolveAssetUrl(sources.me, LOCAL_ME_UMD, CDN_ME_UMD), sources.me === 'cdn' ? THIS_ME_CDN_VERSION : null);
+        }
+
+        function reloadWithSelectedSources() {
+          writeSources({
+            gui: controls.gui && controls.gui.value === 'cdn' ? 'cdn' : 'local',
+            cleaker: controls.cleaker && controls.cleaker.value === 'cdn' ? 'cdn' : 'local',
+            me: controls.me && controls.me.value === 'cdn' ? 'cdn' : 'local',
+          });
+          window.location.reload();
+        }
+
+        [controls.gui, controls.cleaker, controls.me].forEach(function (control) {
+          if (!control) return;
+          control.addEventListener('change', reloadWithSelectedSources);
+        });
+
+        function isRemoteAssetUrl(value) {
+          return /^https?:\/\//i.test(String(value || ''));
+        }
+
+        function loadStyle(href, options) {
+          return new Promise(function (resolve, reject) {
+            if (loaded.has(href)) return resolve(href);
+            const link = document.createElement('link');
+            link.rel = 'stylesheet';
+            link.href = href;
+            const isRemote = isRemoteAssetUrl(href);
+            let settled = false;
+            let timeoutId = null;
+            const cleanup = function () {
+              if (timeoutId != null) {
+                clearTimeout(timeoutId);
+                timeoutId = null;
+              }
+              link.onload = null;
+              link.onerror = null;
+            };
+            const finishResolve = function () {
+              if (settled) return;
+              settled = true;
+              cleanup();
+              loaded.add(href);
+              resolve(href);
+            };
+            const finishReject = function (error) {
+              if (settled) return;
+              settled = true;
+              cleanup();
+              try { link.remove(); } catch (_) {}
+              reject(error);
+            };
+            if (options && options.crossorigin) link.crossOrigin = options.crossorigin;
+            if (isRemote) {
+              timeoutId = window.setTimeout(function () {
+                finishReject(new Error('Failed to load ' + href + ' (timeout)'));
+              }, REMOTE_ASSET_TIMEOUT_MS);
+            }
+            link.onload = function () { finishResolve(); };
+            link.onerror = function () {
+              finishReject(new Error('Failed to load ' + href));
+            };
+            document.head.appendChild(link);
+          });
+        }
+
+        function loadScript(src, options) {
+          return new Promise(function (resolve, reject) {
+            if (loaded.has(src)) return resolve(src);
+            const script = document.createElement('script');
+            script.src = src;
+            script.async = false;
+            const isRemote = isRemoteAssetUrl(src);
+            let settled = false;
+            let timeoutId = null;
+            const cleanup = function () {
+              if (timeoutId != null) {
+                clearTimeout(timeoutId);
+                timeoutId = null;
+              }
+              script.onload = null;
+              script.onerror = null;
+            };
+            const finishResolve = function () {
+              if (settled) return;
+              settled = true;
+              cleanup();
+              loaded.add(src);
+              resolve(src);
+            };
+            const finishReject = function (error) {
+              if (settled) return;
+              settled = true;
+              cleanup();
+              try { script.remove(); } catch (_) {}
+              reject(error);
+            };
+            if (options && options.crossorigin) script.crossOrigin = options.crossorigin;
+            if (isRemote) {
+              timeoutId = window.setTimeout(function () {
+                finishReject(new Error('Failed to load ' + src + ' (timeout)'));
+              }, REMOTE_ASSET_TIMEOUT_MS);
+            }
+            script.onload = function () { finishResolve(); };
+            script.onerror = function () {
+              finishReject(new Error('Failed to load ' + src));
+            };
+            document.head.appendChild(script);
+          });
+        }
+
+        async function probeLocalAsset(url) {
+          if (IS_FILE_ORIGIN) return null;
+          try {
+            const resolved = new URL(url, window.location.href);
+            if (resolved.origin !== window.location.origin) return null;
+            const response = await fetch(resolved.href, {
+              method: 'HEAD',
+              cache: 'no-store',
+            });
+            if (response.status === 405 || response.status === 501) {
+              return null;
+            }
+            return response.ok;
+          } catch (_) {
+            return false;
+          }
+        }
+
+        function getAssetLoadCandidates(source, localSrc, cdnSrc) {
+          if (source === 'local') {
+            return [
+              { source: 'local', url: resolveAssetUrl('local', localSrc, cdnSrc), options: undefined },
+              { source: 'cdn', url: resolveAssetUrl('cdn', localSrc, cdnSrc), options: { crossorigin: 'anonymous' } },
+            ];
+          }
+          return [
+            { source: 'cdn', url: resolveAssetUrl('cdn', localSrc, cdnSrc), options: { crossorigin: 'anonymous' } },
+            { source: 'local', url: resolveAssetUrl('local', localSrc, cdnSrc), options: undefined },
+          ];
+        }
+
+        async function loadSelectedAsset(source, localSrc, cdnSrc, kind) {
+          const candidates = getAssetLoadCandidates(source, localSrc, cdnSrc);
+          const loader = kind === 'style' ? loadStyle : loadScript;
+          let lastError = null;
+          for (let i = 0; i < candidates.length; i += 1) {
+            const candidate = candidates[i];
+            try {
+              if (candidate.source === 'local') {
+                const available = await probeLocalAsset(candidate.url);
+                if (available === false) {
+                  lastError = new Error('Local asset not available: ' + candidate.url);
+                  continue;
+                }
+              }
+              await loader(candidate.url, candidate.options);
+              return candidate;
+            } catch (error) {
+              lastError = error;
+            }
+          }
+          throw lastError || new Error('Failed to load ' + kind + ' asset.');
+        }
+
+        async function loadRuntimeScriptWithFallback(source, localSrc, cdnSrc) {
+          return loadSelectedAsset(source, localSrc, cdnSrc, 'script');
+        }
+
+        async function ensureReactRuntime(source) {
+          const hasReact = Boolean(window.React && typeof window.React.createContext === 'function');
+          const hasReactDOM = Boolean(window.ReactDOM && typeof window.ReactDOM.createRoot === 'function');
+          if (!hasReact) {
+            await loadRuntimeScriptWithFallback(source, LOCAL_REACT_UMD, CDN_REACT_UMD);
+          }
+          if (!hasReactDOM) {
+            await loadRuntimeScriptWithFallback(source, LOCAL_REACTDOM_UMD, CDN_REACTDOM_UMD);
+          }
+        }
+
+        function buildGuiVersionedAssets(version) {
+          const normalized = String(version || '').trim();
+          return {
+            css: 'https://cdn.jsdelivr.net/npm/this.gui@' + normalized + '/dist/styles.css',
+            js: 'https://cdn.jsdelivr.net/npm/this.gui@' + normalized + '/dist/this.gui.umd.js',
+            version: normalized,
+          };
+        }
+
+        function getGuiStableAssets() {
+          return buildGuiVersionedAssets(THIS_GUI_STABLE_VERSION);
+        }
+
+        async function resolveGuiLatestAssets() {
+          if (guiLatestAssetsPromise) return guiLatestAssetsPromise;
+          guiLatestAssetsPromise = (async function () {
+            try {
+              const response = await fetch(GUI_LATEST_META_URL, { cache: 'no-store' });
+              if (!response.ok) throw new Error('latest metadata failed: ' + response.status);
+              const payload = await response.json();
+              const version = String(payload && payload.version || '').trim();
+              return version ? buildGuiVersionedAssets(version) : getGuiStableAssets();
+            } catch (_) {
+              return getGuiStableAssets();
+            }
+          })();
+          return guiLatestAssetsPromise;
+        }
+
+        function getLocalGuiAssets() {
+          return {
+            css: resolveAssetUrl('local', LOCAL_GUI_CSS, CDN_GUI_CSS),
+            js: resolveAssetUrl('local', LOCAL_GUI_BOOTSTRAP, CDN_GUI_BOOTSTRAP),
+          };
+        }
+
+        async function loadGuiRuntimeAssets(source) {
+          const latestAssets = await resolveGuiLatestAssets();
+          const stableAssets = getGuiStableAssets();
+          const localAssets = getLocalGuiAssets();
+          const candidates = source === 'local'
+            ? [
+                { source: 'local', css: localAssets.css, js: localAssets.js, version: null, local: true },
+                { source: 'stable', css: stableAssets.css, js: stableAssets.js, version: stableAssets.version, options: { crossorigin: 'anonymous' } },
+                { source: 'latest', css: latestAssets.css, js: latestAssets.js, version: latestAssets.version, options: { crossorigin: 'anonymous' } },
+              ]
+            : [
+                { source: 'latest', css: latestAssets.css, js: latestAssets.js, version: latestAssets.version, options: { crossorigin: 'anonymous' } },
+                { source: 'stable', css: stableAssets.css, js: stableAssets.js, version: stableAssets.version, options: { crossorigin: 'anonymous' } },
+                { source: 'local', css: localAssets.css, js: localAssets.js, version: null, local: true },
+              ];
+          let lastError = null;
+          for (let i = 0; i < candidates.length; i += 1) {
+            const candidate = candidates[i];
+            try {
+              if (candidate.local) {
+                const cssAvailable = await probeLocalAsset(candidate.css);
+                const jsAvailable = await probeLocalAsset(candidate.js);
+                if (cssAvailable === false || jsAvailable === false) {
+                  lastError = new Error('Local GUI runtime not available.');
+                  continue;
+                }
+              }
+              await loadStyle(candidate.css, candidate.options);
+              await loadScript(candidate.js, candidate.options);
+              return {
+                source: candidate.source,
+                url: candidate.js,
+                css: candidate.css,
+                version: candidate.version || null,
+              };
+            } catch (error) {
+              lastError = error;
+            }
+          }
+          throw lastError || new Error('Failed to load GUI runtime.');
+        }
+
+        async function loadGui(source) {
+          setStatus('gui', 'pending', resolveAssetUrl(source, LOCAL_GUI_BOOTSTRAP, CDN_GUI_BOOTSTRAP), source === 'cdn' ? 'latest' : null);
+          try {
+            await ensureReactRuntime(source);
+            const asset = await loadGuiRuntimeAssets(source);
+            const version =
+              (window.GUI && (window.GUI.version || window.GUI.VERSION || window.GUI.__version)) ||
+              asset.version ||
+              null;
+            setStatus('gui', 'loaded', asset.url, version);
+          } catch (error) {
+            const fallbackUrl = resolveAssetUrl(source, LOCAL_GUI_BOOTSTRAP, CDN_GUI_BOOTSTRAP);
+            setStatus('gui', 'notfound', fallbackUrl, source === 'cdn' ? THIS_GUI_STABLE_VERSION : null);
+          }
+        }
+
+        async function loadCleaker(source) {
+          setStatus('cleaker', 'pending', resolveAssetUrl(source, LOCAL_CLEAKER_UMD, CDN_CLEAKER_UMD), source === 'cdn' ? CLEAKER_CDN_VERSION : null);
+          try {
+            const asset = await loadRuntimeScriptWithFallback(source, LOCAL_CLEAKER_UMD, CDN_CLEAKER_UMD);
+            const version = asset.source === 'cdn' ? CLEAKER_CDN_VERSION : null;
+            setStatus('cleaker', 'loaded', asset.url, version);
+          } catch (_) {
+            setStatus('cleaker', 'notfound', resolveAssetUrl(source, LOCAL_CLEAKER_UMD, CDN_CLEAKER_UMD), source === 'cdn' ? CLEAKER_CDN_VERSION : null);
+          }
+        }
+
+        async function loadMe(source) {
+          setStatus('me', 'pending', resolveAssetUrl(source, LOCAL_ME_UMD, CDN_ME_UMD), source === 'cdn' ? THIS_ME_CDN_VERSION : null);
+          try {
+            const asset = await loadRuntimeScriptWithFallback(source, LOCAL_ME_UMD, CDN_ME_UMD);
+            const version = asset.source === 'cdn' ? THIS_ME_CDN_VERSION : null;
+            setStatus('me', 'loaded', asset.url, version);
+          } catch (_) {
+            setStatus('me', 'notfound', resolveAssetUrl(source, LOCAL_ME_UMD, CDN_ME_UMD), source === 'cdn' ? THIS_ME_CDN_VERSION : null);
+          }
+        }
+
+        syncUi();
+        updateResolvedUrls();
+        bindToggle('gui');
+        bindToggle('cleaker');
+        bindToggle('me');
+
+        const sources = readSources();
+        await loadGui(sources.gui);
+        await loadCleaker(sources.cleaker);
+        await loadMe(sources.me);
+      })();
     </script>
   </body>
 </html>

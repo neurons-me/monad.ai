@@ -9,6 +9,7 @@ exports.openNamespace = openNamespace;
 const crypto_1 = __importDefault(require("crypto"));
 const db_1 = require("../Blockchain/db");
 const derive_1 = require("./derive");
+const manager_1 = require("./manager");
 function normalizeNamespace(raw) {
     return String(raw || "").trim().toLowerCase();
 }
@@ -28,6 +29,7 @@ function claimNamespace(input) {
     const namespace = normalizeNamespace(input.namespace);
     const secret = String(input.secret || "");
     const publicKey = String(input.publicKey || "").trim() || null;
+    const privateKey = String(input.privateKey || "").trim() || null;
     if (!namespace)
         return { ok: false, error: "NAMESPACE_REQUIRED" };
     if (!secret)
@@ -40,20 +42,47 @@ function claimNamespace(input) {
     const unlockKey = (0, derive_1.deriveUnlockKey)(namespace, secret);
     const encryptedNoise = (0, derive_1.encryptNoise)(noise, unlockKey);
     const now = Date.now();
-    db_1.db.prepare(`
-    INSERT INTO claims (namespace, identityHash, encryptedNoise, publicKey, createdAt, updatedAt)
-    VALUES (?, ?, ?, ?, ?, ?)
-  `).run(namespace, identityHash, encryptedNoise, publicKey, now, now);
+    let persistentClaim;
+    try {
+        const bundle = (0, manager_1.buildPersistentClaimBundle)({
+            namespace,
+            identityHash,
+            publicKey,
+            privateKey,
+            issuedAt: now,
+        });
+        db_1.db.prepare(`
+      INSERT INTO claims (namespace, identityHash, encryptedNoise, publicKey, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(namespace, identityHash, encryptedNoise, bundle.summary.claim.publicKey.key, now, now);
+        persistentClaim = (0, manager_1.writePersistentClaimBundle)(bundle);
+    }
+    catch (error) {
+        try {
+            db_1.db.prepare(`DELETE FROM claims WHERE namespace = ?`).run(namespace);
+        }
+        catch {
+        }
+        const code = error instanceof Error ? error.message : String(error);
+        if (code === "CLAIM_KEYPAIR_MISMATCH") {
+            return { ok: false, error: "CLAIM_KEYPAIR_MISMATCH" };
+        }
+        if (code === "CLAIM_KEY_INVALID") {
+            return { ok: false, error: "CLAIM_KEY_INVALID" };
+        }
+        return { ok: false, error: "CLAIM_PERSIST_FAILED" };
+    }
     const record = getClaim(namespace);
     return {
         ok: true,
         noise,
+        persistentClaim,
         record: record ||
             {
                 namespace,
                 identityHash,
                 encryptedNoise,
-                publicKey,
+                publicKey: persistentClaim.claim.publicKey.key,
                 createdAt: now,
                 updatedAt: now,
             },

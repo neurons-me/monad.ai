@@ -1,17 +1,31 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.createRawObserverRelation = createRawObserverRelation;
 exports.resolveHostNamespace = resolveHostNamespace;
 exports.resolveTransportHost = resolveTransportHost;
-exports.getHostSubdomain = getHostSubdomain;
 exports.isReservedLabel = isReservedLabel;
+exports.isProjectableRootHost = isProjectableRootHost;
 exports.normalizeUsernameLabel = normalizeUsernameLabel;
 exports.canonicalPair = canonicalPair;
 exports.getAtSelectorFromPath = getAtSelectorFromPath;
 exports.getAtNestedUserFromPath = getAtNestedUserFromPath;
 exports.resolveChainNamespace = resolveChainNamespace;
 exports.resolveNamespace = resolveNamespace;
+exports.resolveNamespaceProjectionRoot = resolveNamespaceProjectionRoot;
+exports.resolveObserverRelation = resolveObserverRelation;
+exports.formatObserverRelationLabel = formatObserverRelationLabel;
+exports.formatObserverRelationQuery = formatObserverRelationQuery;
 exports.resolveLens = resolveLens;
 exports.filterBlocksByNamespace = filterBlocksByNamespace;
+function createRawObserverRelation() {
+    return {
+        operator: "?",
+        mode: "raw",
+        value: null,
+        observer: null,
+        namespace: null,
+    };
+}
 function resolveHostNamespace(req) {
     const xfHost = req.headers["x-forwarded-host"];
     const hostHeaderRaw = (Array.isArray(xfHost) ? xfHost[0] : xfHost) ||
@@ -31,19 +45,17 @@ function resolveTransportHost(req) {
     const hostnameOnly = noProto.split(":")[0].trim();
     return hostnameOnly || "unknown";
 }
-function getHostSubdomain(hostname) {
-    const parts = String(hostname || "").split(".").filter(Boolean);
-    if (parts.length === 1 && parts[0] === "localhost")
-        return "";
-    if (parts.length === 2 && parts[1] === "localhost")
-        return parts[0] || "";
-    if (parts.length < 3)
-        return "";
-    return parts[0] || "";
-}
 function isReservedLabel(label) {
     const x = String(label || "").toLowerCase();
     return x === "www" || x === "api";
+}
+function isProjectableRootHost(hostname) {
+    const parts = String(hostname || "").split(".").filter(Boolean);
+    if (parts.length === 1 && parts[0] === "localhost")
+        return true;
+    if (parts.length === 2 && parts[1] === "localhost")
+        return false;
+    return parts.length === 2;
 }
 function normalizeUsernameLabel(raw) {
     const x = String(raw || "").trim().toLowerCase();
@@ -99,55 +111,146 @@ function resolveChainNamespace(req) {
     const host = resolveHostNamespace(req);
     if (!host)
         return "unknown";
-    if (host.endsWith(".localhost")) {
-        const sub = host.replace(/\.localhost$/i, "");
-        if (sub && !isReservedLabel(sub))
-            return `localhost/users/${sub}`;
-        return "localhost";
-    }
     const atSel = getAtSelectorFromPath(req);
     const atNested = getAtNestedUserFromPath(req);
-    if (atSel || atNested) {
-        const maybeSub = getHostSubdomain(host);
-        if (!maybeSub || isReservedLabel(maybeSub)) {
-            const base = host === "localhost" ? "localhost" : host;
-            if (atNested) {
-                return `${base}/users/${atNested.a}/users/${atNested.b}`;
-            }
-            if (atSel?.kind === "relation") {
-                return `${base}/relations/${atSel.pair}`;
-            }
-            if (atSel?.kind === "user") {
-                return `${base}/users/${atSel.username}`;
-            }
-        }
+    const rootProjectable = isProjectableRootHost(host);
+    if (atNested) {
+        return rootProjectable ? `${atNested.a}.${host}` : host;
     }
-    const sub = getHostSubdomain(host);
-    if (!sub || isReservedLabel(sub))
+    if (atSel?.kind === "relation") {
         return host;
-    const parts = host.split(".");
-    const root = parts.slice(1).join(".");
-    return root ? `${root}/users/${sub}` : host;
+    }
+    if (atSel?.kind === "user") {
+        return rootProjectable ? `${atSel.username}.${host}` : host;
+    }
+    return host;
 }
 function resolveNamespace(req) {
     return resolveChainNamespace(req);
 }
-function resolveLens(req) {
+function resolveNamespaceProjectionRoot(namespace) {
+    const ns = String(namespace || "").trim().toLowerCase();
+    if (!ns)
+        return "";
+    const userMatch = ns.match(/^([^\/]+)\/users\/([^\/]+)$/i);
+    if (userMatch) {
+        return String(userMatch[1] || "").trim().toLowerCase();
+    }
+    const dotParts = ns.split(".").filter(Boolean);
+    if (dotParts.length === 2 && dotParts[1] === "localhost")
+        return "localhost";
+    if (dotParts.length <= 2)
+        return ns;
+    return dotParts.slice(1).join(".");
+}
+function normalizeNamespaceReference(raw) {
+    return String(raw || "")
+        .trim()
+        .toLowerCase()
+        .replace(/^@+/, "")
+        .replace(/[^a-z0-9._/-]/g, "");
+}
+function resolveObserverReference(raw) {
+    const normalized = normalizeNamespaceReference(raw);
+    if (!normalized)
+        return null;
+    if (normalized.includes(".") || normalized.includes("/")) {
+        return {
+            observer: normalized,
+            namespace: normalized,
+        };
+    }
+    const observer = normalizeUsernameLabel(normalized);
+    if (!observer)
+        return null;
+    return {
+        observer,
+        namespace: null,
+    };
+}
+function resolveObserverRelation(req) {
     const q = req.query || {};
-    const me = String(q.me ?? "").trim();
+    const asRaw = String(q.as ?? "").trim();
+    if (asRaw) {
+        const targetNamespace = resolveNamespace(req);
+        const projectionRoot = resolveNamespaceProjectionRoot(targetNamespace) || resolveHostNamespace(req);
+        const resolved = resolveObserverReference(asRaw);
+        if (!resolved)
+            return createRawObserverRelation();
+        const observerNamespace = resolved.namespace
+            ? resolved.namespace
+            : isProjectableRootHost(projectionRoot)
+                ? `${resolved.observer}.${projectionRoot}`
+                : resolved.observer;
+        return {
+            operator: "?",
+            mode: "observer",
+            value: asRaw,
+            observer: resolved.observer,
+            namespace: observerNamespace,
+        };
+    }
+    const me = String(q.me ?? "").trim().toLowerCase();
+    if (me === "1" || me === "true") {
+        const namespace = resolveNamespace(req);
+        return {
+            operator: "?",
+            mode: "self",
+            value: "me",
+            observer: "self",
+            namespace,
+        };
+    }
     const view = String(q.view ?? "").trim().toLowerCase();
-    if (me === "1" || me.toLowerCase() === "true")
+    if (view) {
+        return {
+            operator: "?",
+            mode: "view",
+            value: view,
+            observer: null,
+            namespace: null,
+        };
+    }
+    return createRawObserverRelation();
+}
+function formatObserverRelationLabel(relation) {
+    if (relation.mode === "observer") {
+        return relation.namespace
+            ? `as:${relation.namespace}`
+            : relation.observer
+                ? `as:${relation.observer}`
+                : "as";
+    }
+    if (relation.mode === "self")
         return "me";
-    if (view)
-        return view;
+    if (relation.mode === "view")
+        return relation.value || "view";
     return "raw";
+}
+function formatObserverRelationQuery(relation) {
+    if (relation.mode === "observer") {
+        const value = relation.namespace || relation.observer || relation.value;
+        return value ? `?as=${encodeURIComponent(value)}` : "";
+    }
+    if (relation.mode === "self") {
+        return "?me=true";
+    }
+    if (relation.mode === "view") {
+        return relation.value ? `?view=${encodeURIComponent(relation.value)}` : "";
+    }
+    return "";
+}
+function resolveLens(req) {
+    return formatObserverRelationLabel(resolveObserverRelation(req));
 }
 function filterBlocksByNamespace(allBlocks, ns) {
     if (!ns)
         return allBlocks;
-    const prefix = ns.endsWith("/") ? ns : `${ns}/`;
+    const slashPrefix = ns.endsWith("/") ? ns : `${ns}/`;
+    const dotSuffix = `.${ns}`;
+    const bracketPrefix = `${ns}[`;
     return allBlocks.filter((b) => {
         const n = String(b?.namespace || "");
-        return n === ns || n.startsWith(prefix);
+        return n === ns || n.startsWith(slashPrefix) || n.endsWith(dotSuffix) || n.startsWith(bracketPrefix);
     });
 }

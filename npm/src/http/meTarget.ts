@@ -1,5 +1,11 @@
 import type express from "express";
-import { resolveNamespace, resolveTransportHost } from "./namespace";
+import {
+  formatObserverRelationQuery,
+  resolveNamespace,
+  resolveObserverRelation,
+  resolveTransportHost,
+  type ObserverRelation,
+} from "./namespace";
 
 export type MeOperationKind = "read" | "write" | "claim" | "open";
 
@@ -9,6 +15,7 @@ export interface NormalizedMeTarget {
   operation: MeOperationKind;
   path: string;
   nrp: string;
+  relation: ObserverRelation;
 }
 
 function normalizePathSegments(rawPath: string) {
@@ -46,10 +53,21 @@ function inferNamespace(req: express.Request): string {
   return resolveNamespace(req);
 }
 
+export function buildMeTargetNrp(
+  namespace: string,
+  operation: MeOperationKind,
+  path: string,
+  relation: ObserverRelation,
+) {
+  const normalizedPath = path || "_";
+  return `me://${namespace}:${operation}/${normalizedPath}${formatObserverRelationQuery(relation)}`;
+}
+
 export function normalizeHttpRequestToMeTarget(req: express.Request): NormalizedMeTarget {
   const host = resolveTransportHost(req);
   const operation = inferOperation(req);
   const namespace = inferNamespace(req);
+  const relation = resolveObserverRelation(req);
   const path = operation === "claim" || operation === "open"
     ? ""
     : normalizePathSegments(req.path);
@@ -59,6 +77,7 @@ export function normalizeHttpRequestToMeTarget(req: express.Request): Normalized
     namespace,
     operation,
     path,
-    nrp: `me://${namespace}:${operation}/${path || "_"}`,
+    nrp: buildMeTargetNrp(namespace, operation, path, relation),
+    relation,
   };
 }

@@ -54,10 +54,16 @@ function stripWriteAuthFields(body) {
 }
 function verifySignature(publicKey, message, signature) {
     try {
+        const key = crypto_1.default.createPublicKey(publicKey);
+        const keyType = key.asymmetricKeyType || "";
+        const payload = Buffer.from(message);
+        if (keyType === "ed25519" || keyType === "ed448") {
+            return crypto_1.default.verify(null, payload, key, signature);
+        }
         const verifier = crypto_1.default.createVerify("SHA256");
-        verifier.update(message);
+        verifier.update(payload);
         verifier.end();
-        return verifier.verify(publicKey, signature);
+        return verifier.verify(key, signature);
     }
     catch {
         return false;

@@ -1,5 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.buildMeTargetNrp = buildMeTargetNrp;
 exports.normalizeHttpRequestToMeTarget = normalizeHttpRequestToMeTarget;
 const namespace_1 = require("./namespace");
 function normalizePathSegments(rawPath) {
@@ -36,10 +37,15 @@ function inferNamespace(req) {
     }
     return (0, namespace_1.resolveNamespace)(req);
 }
+function buildMeTargetNrp(namespace, operation, path, relation) {
+    const normalizedPath = path || "_";
+    return `me://${namespace}:${operation}/${normalizedPath}${(0, namespace_1.formatObserverRelationQuery)(relation)}`;
+}
 function normalizeHttpRequestToMeTarget(req) {
     const host = (0, namespace_1.resolveTransportHost)(req);
     const operation = inferOperation(req);
     const namespace = inferNamespace(req);
+    const relation = (0, namespace_1.resolveObserverRelation)(req);
     const path = operation === "claim" || operation === "open"
         ? ""
         : normalizePathSegments(req.path);
@@ -48,6 +54,7 @@ function normalizeHttpRequestToMeTarget(req) {
         namespace,
         operation,
         path,
-        nrp: `me://${namespace}:${operation}/${path || "_"}`,
+        nrp: buildMeTargetNrp(namespace, operation, path, relation),
+        relation,
     };
 }
