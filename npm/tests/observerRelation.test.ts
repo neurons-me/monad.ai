@@ -3,8 +3,13 @@ import { normalizeHttpRequestToMeTarget } from "../src/http/meTarget";
 import {
   formatObserverRelationLabel,
   resolveNamespace,
+  resolveNamespaceProjectionRoot,
   resolveObserverRelation,
 } from "../src/http/namespace";
+import {
+  normalizeNamespaceIdentity,
+  parseNamespaceIdentityParts,
+} from "../src/namespace/identity";
 
 function makeRequest(input: {
   host: string;
@@ -73,6 +78,16 @@ describe("observer relation routing", () => {
     expect(target.namespace).toBe("ana.localhost");
     expect(target.path).toBe("profile");
     expect(target.nrp).toBe("me://ana.localhost:read/profile?as=bella.localhost");
+  });
+
+  it("uses the cleaker namespace parser for localhost-derived identities", () => {
+    expect(normalizeNamespaceIdentity("ana.localhost")).toBe("ana.localhost");
+    expect(resolveNamespaceProjectionRoot("ana.localhost")).toBe("localhost");
+    expect(parseNamespaceIdentityParts("ana.localhost")).toEqual({
+      host: "localhost",
+      username: "ana",
+      effective: "@ana.localhost",
+    });
   });
 
   it("preserves legacy named views as a non-identity relation", () => {

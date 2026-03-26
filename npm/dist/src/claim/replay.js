@@ -8,8 +8,9 @@ exports.getMemoriesForNamespace = getMemoriesForNamespace;
 exports.isNamespaceWriteAuthorized = isNamespaceWriteAuthorized;
 const crypto_1 = __importDefault(require("crypto"));
 const db_1 = require("../Blockchain/db");
+const identity_1 = require("../namespace/identity");
 function normalizeNamespace(raw) {
-    return String(raw || "").trim().toLowerCase();
+    return (0, identity_1.normalizeNamespaceIdentity)(raw);
 }
 function safeParseJson(raw) {
     try {

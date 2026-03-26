@@ -24,7 +24,16 @@ import { createPathResolverHandler } from "./src/http/pathResolver";
 import { createClaimsRouter } from "./src/http/claims";
 import { createSessionRouter } from "./src/http/session";
 import { createLegacyRouter } from "./src/http/legacy";
-import { loadSelfNodeConfig, resolveSelfDispatch } from "./src/http/selfMapping";
+import {
+  buildSelfSurfaceEntry,
+  loadSelfNodeConfig,
+  resolveSelfDispatch,
+} from "./src/http/selfMapping";
+import {
+  normalizeNamespaceIdentity,
+  parseNamespaceIdentityParts,
+} from "./src/namespace/identity";
+import { parseTarget } from "cleaker";
 import { GUI_PKG_DIST_DIR, htmlShell, wantsHtml } from "./src/http/shell";
 
 const PORT = process.env.PORT || 8161;
@@ -150,34 +159,30 @@ function getNamespaceSelectorInfo(namespace: string): NamespaceSelectorInfo {
 function parseBridgeTarget(rawInput: string): BridgeTarget | null {
   const raw = String(rawInput || "").trim();
   if (!raw) return null;
+  try {
+    const parsed = parseTarget(raw.startsWith("me://") ? raw : `me://${raw}`, { allowShorthandRead: true });
+    const namespace = normalizeNamespaceIdentity(parsed.namespace.fqdn);
+    if (!namespace) return null;
 
-  const stripped = raw.startsWith("me://") ? raw.slice("me://".length) : raw;
-  const sanitized = stripped.replace(/^\/+/, "").trim();
-  if (!sanitized) return null;
+    const selector = String(parsed.operation || parsed.intent.selector || "read").trim() || "read";
+    const pathSlash = String(parsed.path || "").trim().replace(/^\/+/, "");
+    const pathDot = pathSlash
+      .split("/")
+      .map((part) => part.trim())
+      .filter(Boolean)
+      .join(".");
+    const nrp = `me://${namespace}:${selector}/${pathDot || "_"}`;
 
-  const parts = sanitized.split("/").filter(Boolean);
-  if (parts.length === 0) return null;
-
-  const head = parts[0];
-  if (!head) return null;
-
-  const headParts = head.split(":");
-  const namespace = String(headParts[0] || "").trim();
-  if (!namespace) return null;
-
-  const selector = String(headParts[1] || "read").trim() || "read";
-  const pathParts = parts.slice(1);
-  const pathSlash = pathParts.join("/");
-  const pathDot = pathParts.join(".");
-  const nrp = `me://${namespace}:${selector}/${pathDot || "_"}`;
-
-  return {
-    namespace,
-    selector,
-    pathSlash,
-    pathDot,
-    nrp,
-  };
+    return {
+      namespace,
+      selector,
+      pathSlash,
+      pathDot,
+      nrp,
+    };
+  } catch {
+    return null;
+  }
 }
 
 function toStableJson(value: unknown): string {
@@ -200,44 +205,7 @@ function computeProofId(input: Record<string, unknown>) {
 }
 
 function parseNamespaceIdentity(namespace: string): ClaimIdentity {
-  const ns = String(namespace || "").trim().toLowerCase();
-  if (!ns) {
-    return {
-      host: "unknown",
-      username: "",
-      effective: "unclaimed",
-    };
-  }
-
-  const userMatch = ns.match(/^([^\/]+)\/users\/([^\/]+)$/i);
-  if (userMatch) {
-    const host = String(userMatch[1] || "").trim();
-    const username = String(userMatch[2] || "").trim();
-    return {
-      host,
-      username,
-      effective: `@${username}.${host}`,
-    };
-  }
-
-  const dotParts = ns.split(".").filter(Boolean);
-  if (dotParts.length >= 3) {
-    const username = dotParts[0] || "";
-    const host = dotParts.slice(1).join(".");
-    if (username && host) {
-      return {
-        host,
-        username,
-        effective: `@${username}.${host}`,
-      };
-    }
-  }
-
-  return {
-    host: ns,
-    username: "",
-    effective: `@${ns}`,
-  };
+  return parseNamespaceIdentityParts(namespace);
 }
 
 function getDefaultReadPolicy(namespace: string) {
@@ -261,7 +229,7 @@ function normalizeOperation(input: unknown): "read" | "write" | "claim" | "open"
 }
 
 function normalizeClaimableNamespace(raw: unknown): string {
-  return String(raw || "").trim().toLowerCase();
+  return normalizeNamespaceIdentity(raw);
 }
 
 function isCanonicalClaimableNamespace(namespace: string): boolean {
@@ -353,12 +321,19 @@ app.get("/__bootstrap", (req, res) => {
   const host = resolveTransportHost(req);
   const origin = `${req.protocol}://${host}`;
   const target = normalizeHttpRequestToMeTarget(req);
+  const surfaceEntry = buildSelfSurfaceEntry({
+    self: SELF_NODE_CONFIG,
+    origin,
+    fallbackHost: NODE_HOSTNAME,
+    requestNamespace: namespace,
+  });
   return res.json(createEnvelope(target, {
     host,
     namespace,
     apiOrigin: origin,
     resolverHostName: NODE_HOSTNAME,
     resolverDisplayName: NODE_DISPLAY_NAME,
+    surfaceEntry,
   }));
 });
 

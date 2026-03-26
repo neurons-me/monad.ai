@@ -1,5 +1,15 @@
 {
-  "identity": "ana.cleaker.me",
-  "tags": ["macbook", "local", "primary"],
-  "endpoint": "http://localhost:8161"
+  "identity": "example.cleaker.me",
+  "tags": ["desktop", "local", "primary"],
+  "endpoint": "http://localhost:8161",
+  "hostname": "example-host.local",
+  "type": "desktop",
+  "trust": "owner",
+  "resources": ["filesystem", "gpu", "camera", "public_ingress", "keychain", "local_lan"],
+  "capacity": {
+    "cpuCores": 10,
+    "ramGb": 32,
+    "storageGb": 512,
+    "bandwidthMbps": 300
+  }
 }

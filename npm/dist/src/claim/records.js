@@ -10,8 +10,25 @@ const crypto_1 = __importDefault(require("crypto"));
 const db_1 = require("../Blockchain/db");
 const derive_1 = require("./derive");
 const manager_1 = require("./manager");
+const identity_1 = require("../namespace/identity");
+const memoryStore_1 = require("./memoryStore");
 function normalizeNamespace(raw) {
-    return String(raw || "").trim().toLowerCase();
+    return (0, identity_1.normalizeNamespaceIdentity)(raw);
+}
+function materializeProjectedNamespaceClaim(namespace, timestamp) {
+    const identity = (0, identity_1.parseNamespaceIdentityParts)(namespace);
+    const hostNamespace = String(identity.host || "").trim().toLowerCase();
+    const username = String(identity.username || "").trim().toLowerCase();
+    const projectedNamespace = normalizeNamespace(namespace);
+    if (!hostNamespace || !username || !projectedNamespace)
+        return;
+    (0, memoryStore_1.appendSemanticMemory)({
+        namespace: hostNamespace,
+        path: `users.${username}`,
+        operator: "__",
+        data: { __ptr: projectedNamespace },
+        timestamp,
+    });
 }
 function getClaim(namespace) {
     const ns = normalizeNamespace(namespace);
@@ -56,6 +73,7 @@ function claimNamespace(input) {
       VALUES (?, ?, ?, ?, ?, ?)
     `).run(namespace, identityHash, encryptedNoise, bundle.summary.claim.publicKey.key, now, now);
         persistentClaim = (0, manager_1.writePersistentClaimBundle)(bundle);
+        materializeProjectedNamespaceClaim(namespace, now);
     }
     catch (error) {
         try {

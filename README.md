@@ -1,16 +1,12 @@
-# monad.ai
+# monad.ai - AlterEgo.
 ###### **monad.ai** is the daemon for `me://` 
-
 `me://[prefix.]constant:selector/path`
 
 **Namespace** binding viene del **host:**
-
 `me://[prefix.]namespace[context]:selector/path`
 
 Entonces, en esa gramática:
-
 **[prefix.]constant = namespace**
-
 - selector = intent/operation
 - path = ruta semántica
 
@@ -44,17 +40,13 @@ me://wikileaks[host:wikileaks.org|protocol:https]:read/page
 So now the **namespace resolution protocol** reads cleanly:
 
 `me://self:read/profile`
-
 `me://self:write/profile.name`
-
 `me://kernel:export/snapshot`
-
 `me://kernel:replay/memory`
 
 ---
 
 # **Algebra de audiencias cifradas**.
-
 - el context define **dónde/cuáles nodos**
 - la capability define **qué acción está permitida**
 - la encryption define **quién puede abrir ese contenido**
@@ -75,7 +67,6 @@ Island I = (path, ciphertext, T, A, P)
 ```
 
 Ejemplo:
-
 - imagen guardada en:
   - office-node
   - iphone
@@ -94,20 +85,17 @@ A = {me, wife}
 ```
 
 Entonces sí:
-
 - **muchos nodos pueden guardar la isla**
 - pero solo un subconjunto puede leerla
 
 ---
 
 A clean way to hold it is:
-
 - space is the primary thing
 - the rest are predicates or projections over that space
 - everything is refinement, union, intersection, membership, replication
 
 So:
-
 - public space = its readable audience approaches the open set
 - private space = audience is tightly bounded, often {self}
 - shared space = audience is a union like {me ∪ wife ∪ ...}
@@ -116,14 +104,12 @@ So:
 - local space, remote space, hosted space = just different topology bindings
 
 You can even write it as one space with different sets:
-
 - A = audience set
 - T = topology set
 - C = capability/action set
 - P = path/subspace set
 
 Then the adjectives are just statements about those sets:
-
 - private: A = {self}
 - shared: |A| > 1
 - encrypted: access to A is cryptographically enforced
@@ -133,21 +119,15 @@ Then the adjectives are just statements about those sets:
 ---
 
 # La Visión: El Claim del Namespace
-
 Lo que buscas es que el primer acto de tu kernel sea un **Claim**.
-
 1. **Local Claim:** `me://local` (Yo soy este nodo).
 2. **Network Claim:** `me://username.cleaker.me` (Yo soy esta identidad en el ledger).
-
 Al hacer esto, tu `me://` ya no es un alias genérico; se convierte en una **URL Soberana Determinista**.
 
 ----
 
 La Visión: El Claim del Namespace
-
 Lo que buscas es que el primer acto de tu kernel sea un **Claim**.
-
 1. **Local Claim:** `me://local` (Yo soy este nodo).
 2. **Network Claim:** `me://username.cleaker.me` (Yo soy esta identidad en el ledger).
-
 Al hacer esto, tu `me://` ya no es un alias genérico; se convierte en una **URL Soberana Determinista**.

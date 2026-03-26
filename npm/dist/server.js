@@ -22,6 +22,8 @@ const claims_1 = require("./src/http/claims");
 const session_1 = require("./src/http/session");
 const legacy_1 = require("./src/http/legacy");
 const selfMapping_1 = require("./src/http/selfMapping");
+const identity_1 = require("./src/namespace/identity");
+const cleaker_1 = require("cleaker");
 const shell_1 = require("./src/http/shell");
 const PORT = process.env.PORT || 8161;
 const NODE_HOSTNAME = os_1.default.hostname();
@@ -128,32 +130,30 @@ function parseBridgeTarget(rawInput) {
     const raw = String(rawInput || "").trim();
     if (!raw)
         return null;
-    const stripped = raw.startsWith("me://") ? raw.slice("me://".length) : raw;
-    const sanitized = stripped.replace(/^\/+/, "").trim();
-    if (!sanitized)
+    try {
+        const parsed = (0, cleaker_1.parseTarget)(raw.startsWith("me://") ? raw : `me://${raw}`, { allowShorthandRead: true });
+        const namespace = (0, identity_1.normalizeNamespaceIdentity)(parsed.namespace.fqdn);
+        if (!namespace)
+            return null;
+        const selector = String(parsed.operation || parsed.intent.selector || "read").trim() || "read";
+        const pathSlash = String(parsed.path || "").trim().replace(/^\/+/, "");
+        const pathDot = pathSlash
+            .split("/")
+            .map((part) => part.trim())
+            .filter(Boolean)
+            .join(".");
+        const nrp = `me://${namespace}:${selector}/${pathDot || "_"}`;
+        return {
+            namespace,
+            selector,
+            pathSlash,
+            pathDot,
+            nrp,
+        };
+    }
+    catch {
         return null;
-    const parts = sanitized.split("/").filter(Boolean);
-    if (parts.length === 0)
-        return null;
-    const head = parts[0];
-    if (!head)
-        return null;
-    const headParts = head.split(":");
-    const namespace = String(headParts[0] || "").trim();
-    if (!namespace)
-        return null;
-    const selector = String(headParts[1] || "read").trim() || "read";
-    const pathParts = parts.slice(1);
-    const pathSlash = pathParts.join("/");
-    const pathDot = pathParts.join(".");
-    const nrp = `me://${namespace}:${selector}/${pathDot || "_"}`;
-    return {
-        namespace,
-        selector,
-        pathSlash,
-        pathDot,
-        nrp,
-    };
+    }
 }
 function toStableJson(value) {
     if (value === null || typeof value !== "object") {
@@ -171,41 +171,7 @@ function computeProofId(input) {
     return (0, crypto_1.createHash)("sha256").update(toStableJson(input)).digest("hex");
 }
 function parseNamespaceIdentity(namespace) {
-    const ns = String(namespace || "").trim().toLowerCase();
-    if (!ns) {
-        return {
-            host: "unknown",
-            username: "",
-            effective: "unclaimed",
-        };
-    }
-    const userMatch = ns.match(/^([^\/]+)\/users\/([^\/]+)$/i);
-    if (userMatch) {
-        const host = String(userMatch[1] || "").trim();
-        const username = String(userMatch[2] || "").trim();
-        return {
-            host,
-            username,
-            effective: `@${username}.${host}`,
-        };
-    }
-    const dotParts = ns.split(".").filter(Boolean);
-    if (dotParts.length >= 3) {
-        const username = dotParts[0] || "";
-        const host = dotParts.slice(1).join(".");
-        if (username && host) {
-            return {
-                host,
-                username,
-                effective: `@${username}.${host}`,
-            };
-        }
-    }
-    return {
-        host: ns,
-        username: "",
-        effective: `@${ns}`,
-    };
+    return (0, identity_1.parseNamespaceIdentityParts)(namespace);
 }
 function getDefaultReadPolicy(namespace) {
     const identity = parseNamespaceIdentity(namespace);
@@ -226,7 +192,7 @@ function normalizeOperation(input) {
     return "write";
 }
 function normalizeClaimableNamespace(raw) {
-    return String(raw || "").trim().toLowerCase();
+    return (0, identity_1.normalizeNamespaceIdentity)(raw);
 }
 function isCanonicalClaimableNamespace(namespace) {
     const ns = normalizeClaimableNamespace(namespace);
@@ -296,12 +262,19 @@ app.get("/__bootstrap", (req, res) => {
     const host = (0, namespace_1.resolveTransportHost)(req);
     const origin = `${req.protocol}://${host}`;
     const target = (0, meTarget_1.normalizeHttpRequestToMeTarget)(req);
+    const surfaceEntry = (0, selfMapping_1.buildSelfSurfaceEntry)({
+        self: SELF_NODE_CONFIG,
+        origin,
+        fallbackHost: NODE_HOSTNAME,
+        requestNamespace: namespace,
+    });
     return res.json((0, envelope_1.createEnvelope)(target, {
         host,
         namespace,
         apiOrigin: origin,
         resolverHostName: NODE_HOSTNAME,
         resolverDisplayName: NODE_DISPLAY_NAME,
+        surfaceEntry,
     }));
 });
 app.get("/__fetch", async (req, res) => {

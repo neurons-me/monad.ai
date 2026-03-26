@@ -38,6 +38,8 @@ export interface HostAttestationPayload {
   attestation: string;
   daemonPublicKey: string;
   capabilities?: string[];
+  label?: string;
+  hostname?: string;
 }
 
 export interface VerifyHostSessionRequest {

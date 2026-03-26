@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
+import { normalizeNamespaceIdentity } from "../namespace/identity";
 import type {
   PersistentClaimKeySource,
   PersistentClaimPublicKey,
@@ -41,7 +42,7 @@ function stableStringify(value: unknown): string {
 }
 
 function normalizeNamespace(raw: unknown) {
-  return String(raw || "").trim().toLowerCase();
+  return normalizeNamespaceIdentity(raw);
 }
 
 function ensureDirectory(dirPath: string) {

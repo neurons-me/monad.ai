@@ -1,9 +1,10 @@
 import assert from "assert";
 import crypto from "crypto";
 import { claimNamespace, openNamespace } from "../src/claim/records";
+import { listSemanticMemoriesByNamespace } from "../src/claim/memoryStore";
 
 function uniqueNamespace() {
-  return `claim-${Date.now()}-${crypto.randomBytes(4).toString("hex")}.cleaker`;
+  return `claim-${Date.now()}-${crypto.randomBytes(4).toString("hex")}.cleaker.me`;
 }
 
 function pass(label: string) {
@@ -36,6 +37,47 @@ function testVerified() {
   assert.equal(opened.noise, claim.noise, "opening must recover the original noise");
 }
 
+function testClaimMaterializesRootUserPointer() {
+  const namespace = uniqueNamespace();
+  const secret = "luna";
+  const username = namespace.split(".")[0];
+
+  const before = listSemanticMemoriesByNamespace("cleaker.me", {
+    prefix: `users.${username}`,
+    limit: 20,
+  }).length;
+
+  const claim = claimNamespace({ namespace, secret });
+  assert.equal(claim.ok, true, "claim should succeed for a projected namespace");
+  if (!claim.ok) {
+    throw new Error(`claim failed with ${claim.error}`);
+  }
+
+  const rootMemories = listSemanticMemoriesByNamespace("cleaker.me", {
+    prefix: `users.${username}`,
+    limit: 20,
+  });
+  assert.equal(rootMemories.length, before + 1, "claim should materialize one root user pointer");
+
+  const pointer = rootMemories[rootMemories.length - 1];
+  assert.equal(pointer.path, `users.${username}`);
+  assert.equal(pointer.operator, "__");
+  assert.deepEqual(pointer.data, { __ptr: namespace });
+
+  const afterClaimCount = rootMemories.length;
+  const opened = openNamespace({ namespace, secret });
+  assert.equal(opened.ok, true, "open should succeed after claim");
+  if (!opened.ok) {
+    throw new Error(`open failed with ${opened.error}`);
+  }
+
+  const afterOpen = listSemanticMemoriesByNamespace("cleaker.me", {
+    prefix: `users.${username}`,
+    limit: 20,
+  });
+  assert.equal(afterOpen.length, afterClaimCount, "open should not materialize root pointers again");
+}
+
 function testFailed() {
   const namespace = uniqueNamespace();
   const secret = "luna";
@@ -58,6 +100,9 @@ function testFailed() {
 try {
   testVerified();
   pass("claim_test_verification.verified");
+
+  testClaimMaterializesRootUserPointer();
+  pass("claim_test_verification.root_pointer");
 
   testFailed();
   pass("claim_test_verification.failed");

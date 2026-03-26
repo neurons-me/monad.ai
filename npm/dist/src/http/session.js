@@ -9,8 +9,59 @@ const crypto_1 = __importDefault(require("crypto"));
 const memoryStore_1 = require("../claim/memoryStore");
 const meTarget_1 = require("./meTarget");
 const envelope_1 = require("./envelope");
+const identity_1 = require("../namespace/identity");
+const namespace_1 = require("./namespace");
 function normalizeUsername(input) {
     return String(input || "").trim().toLowerCase();
+}
+function normalizeHostKey(input) {
+    return String(input || "")
+        .trim()
+        .toLowerCase()
+        .replace(/\.local$/i, "")
+        .replace(/[^a-z0-9_-]/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-+|-+$/g, "");
+}
+function parseEndpointHost(input) {
+    const raw = String(input || "").trim();
+    if (!raw)
+        return "";
+    try {
+        return String(new URL(raw).hostname || "").trim().toLowerCase();
+    }
+    catch {
+        return raw
+            .replace(/^https?:\/\//i, "")
+            .split("/")[0]
+            .split(":")[0]
+            .trim()
+            .toLowerCase();
+    }
+}
+function isLoopbackishHost(host) {
+    const normalized = String(host || "").trim().toLowerCase();
+    return /^(localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0)$/.test(normalized);
+}
+function deriveHostLabel(input) {
+    const label = normalizeHostKey(input.explicitLabel || "") ||
+        normalizeHostKey(input.explicitHostname || "") ||
+        (() => {
+            const endpointHost = parseEndpointHost(String(input.localEndpoint || ""));
+            if (!endpointHost || isLoopbackishHost(endpointHost))
+                return "";
+            return normalizeHostKey(endpointHost);
+        })() ||
+        normalizeHostKey(input.fingerprint);
+    return label || "host";
+}
+function resolveSessionRootNamespace(req) {
+    const resolved = (0, namespace_1.resolveNamespaceProjectionRoot)((0, namespace_1.resolveNamespace)(req));
+    return String(resolved || "").trim().toLowerCase();
+}
+function resolveUserNamespace(req, username) {
+    const root = resolveSessionRootNamespace(req);
+    return (0, identity_1.composeProjectedNamespace)(username, root);
 }
 function computeSessionExpiry(iatMs, ttlSeconds) {
     const ttl = Number.isFinite(ttlSeconds) ? Number(ttlSeconds) : 3600;
@@ -71,17 +122,17 @@ function createSessionRouter() {
             return res.status(400).json((0, envelope_1.createErrorEnvelope)(target, { error: "USERNAME_REQUIRED" }));
         }
         const session = makeCloudSession({ ...body, username });
-        const namespace = `${username}.cleaker.me`;
+        const namespace = resolveUserNamespace(req, username);
         (0, memoryStore_1.appendSemanticMemory)({
             namespace,
-            path: `${namespace}/session/mode`,
+            path: `session.mode`,
             operator: "=",
             data: "cloud",
             timestamp: session.iat,
         });
         (0, memoryStore_1.appendSemanticMemory)({
             namespace,
-            path: `${namespace}/session/last_seen`,
+            path: `session.last_seen`,
             operator: "=",
             data: session.iat,
             timestamp: session.iat,
@@ -98,6 +149,13 @@ function createSessionRouter() {
         const daemonPublicKey = String(body.host?.daemonPublicKey || "").trim();
         const attestation = String(body.host?.attestation || "").trim();
         const localEndpoint = String(body.host?.local_endpoint || "").trim() || "localhost:8161";
+        const hostLabel = deriveHostLabel({
+            explicitLabel: String(body.host?.label || "").trim(),
+            explicitHostname: String(body.host?.hostname || "").trim(),
+            localEndpoint,
+            fingerprint: hostFingerprint,
+        });
+        const hostname = String(body.host?.hostname || "").trim() || parseEndpointHost(localEndpoint);
         if (!username || !nonce || !hostFingerprint || !daemonPublicKey || !attestation) {
             return res.status(400).json((0, envelope_1.createErrorEnvelope)(target, { error: "INVALID_HOST_VERIFY_PAYLOAD" }));
         }
@@ -108,7 +166,8 @@ function createSessionRouter() {
         if (!verified) {
             return res.status(403).json((0, envelope_1.createErrorEnvelope)(target, { error: "ATTESTATION_INVALID" }));
         }
-        if ((0, memoryStore_1.getHostStatus)(username, hostFingerprint) === "revoked") {
+        const namespace = resolveUserNamespace(req, username);
+        if ((0, memoryStore_1.getHostStatus)(namespace, username, hostFingerprint) === "revoked") {
             return res.status(403).json((0, envelope_1.createErrorEnvelope)(target, { error: "HOST_REVOKED" }));
         }
         const iat = Date.now();
@@ -128,45 +187,65 @@ function createSessionRouter() {
                 attestation,
             },
         };
-        const namespace = `${username}.cleaker.me`;
         (0, memoryStore_1.appendSemanticMemory)({
             namespace,
-            path: `${namespace}/hosts/${hostFingerprint}/status`,
+            path: `host.${hostLabel}.fingerprint`,
+            operator: "=",
+            data: hostFingerprint,
+            timestamp: iat,
+        });
+        (0, memoryStore_1.appendSemanticMemory)({
+            namespace,
+            path: `host.${hostLabel}.label`,
+            operator: "=",
+            data: hostLabel,
+            timestamp: iat,
+        });
+        (0, memoryStore_1.appendSemanticMemory)({
+            namespace,
+            path: `host.${hostLabel}.hostname`,
+            operator: "=",
+            data: hostname,
+            timestamp: iat,
+        });
+        (0, memoryStore_1.appendSemanticMemory)({
+            namespace,
+            path: `host.${hostLabel}.status`,
             operator: "=",
             data: "authorized",
             timestamp: iat,
         });
         (0, memoryStore_1.appendSemanticMemory)({
             namespace,
-            path: `${namespace}/hosts/${hostFingerprint}/capabilities`,
+            path: `host.${hostLabel}.capabilities`,
             operator: "=",
             data: capabilities,
             timestamp: iat,
         });
         (0, memoryStore_1.appendSemanticMemory)({
             namespace,
-            path: `${namespace}/hosts/${hostFingerprint}/last_seen`,
+            path: `host.${hostLabel}.last_seen`,
             operator: "=",
             data: iat,
             timestamp: iat,
         });
         (0, memoryStore_1.appendSemanticMemory)({
             namespace,
-            path: `${namespace}/hosts/${hostFingerprint}/local_endpoint`,
+            path: `host.${hostLabel}.local_endpoint`,
             operator: "=",
             data: localEndpoint,
             timestamp: iat,
         });
         (0, memoryStore_1.appendSemanticMemory)({
             namespace,
-            path: `${namespace}/hosts/${hostFingerprint}/public_key`,
+            path: `host.${hostLabel}.public_key`,
             operator: "=",
             data: daemonPublicKey,
             timestamp: iat,
         });
         (0, memoryStore_1.appendSemanticMemory)({
             namespace,
-            path: `${namespace}/hosts/${hostFingerprint}/attestation`,
+            path: `host.${hostLabel}.attestation`,
             operator: "=",
             data: attestation,
             timestamp: iat,
@@ -174,14 +253,14 @@ function createSessionRouter() {
         });
         (0, memoryStore_1.appendSemanticMemory)({
             namespace,
-            path: `${namespace}/session/mode`,
+            path: `session.mode`,
             operator: "=",
             data: "host",
             timestamp: iat,
         });
         (0, memoryStore_1.appendSemanticMemory)({
             namespace,
-            path: `${namespace}/session/last_seen`,
+            path: `session.last_seen`,
             operator: "=",
             data: iat,
             timestamp: iat,
@@ -195,11 +274,15 @@ function createSessionRouter() {
         if (!username) {
             return res.status(400).json((0, envelope_1.createErrorEnvelope)(target, { error: "USERNAME_REQUIRED" }));
         }
-        const hosts = (0, memoryStore_1.listHostsByUsername)(username).map((host) => ({
+        const namespace = resolveUserNamespace(req, username);
+        const hosts = (0, memoryStore_1.listHostsByNamespace)(namespace, username).map((host) => ({
             id: host.id,
+            namespace: host.namespace,
+            host_key: host.host_key,
             username: host.username,
             fingerprint: host.fingerprint,
             public_key: host.public_key,
+            hostname: host.hostname,
             label: host.label,
             local_endpoint: host.local_endpoint,
             capabilities: (() => {
@@ -230,9 +313,11 @@ function createSessionRouter() {
         if (!username || !fingerprint) {
             return res.status(400).json((0, envelope_1.createErrorEnvelope)(target, { error: "INVALID_HISTORY_PAYLOAD" }));
         }
-        const memories = (0, memoryStore_1.listHostMemoryHistory)(username, fingerprint, limit).map((m) => ({
+        const namespace = resolveUserNamespace(req, username);
+        const memories = (0, memoryStore_1.listHostMemoryHistory)(namespace, username, fingerprint, limit).map((m) => ({
             id: m.id,
             namespace: m.namespace,
+            host_key: m.host_key,
             username: m.username,
             fingerprint: m.fingerprint,
             path: m.path,
@@ -259,17 +344,20 @@ function createSessionRouter() {
             return res.status(400).json((0, envelope_1.createErrorEnvelope)(target, { error: "INVALID_REVOKE_PAYLOAD" }));
         }
         const now = Date.now();
-        const namespace = `${username}.cleaker.me`;
+        const namespace = resolveUserNamespace(req, username);
+        const hosts = (0, memoryStore_1.listHostsByNamespace)(namespace, username);
+        const host = hosts.find((entry) => entry.fingerprint === hostFingerprint);
+        const hostKey = host?.host_key || normalizeHostKey(hostFingerprint);
         (0, memoryStore_1.appendSemanticMemory)({
             namespace,
-            path: `${namespace}/hosts/${hostFingerprint}/status`,
+            path: `host.${hostKey}.status`,
             operator: "=",
             data: "revoked",
             timestamp: now,
         });
         (0, memoryStore_1.appendSemanticMemory)({
             namespace,
-            path: `${namespace}/hosts/${hostFingerprint}/last_seen`,
+            path: `host.${hostKey}.last_seen`,
             operator: "=",
             data: now,
             timestamp: now,

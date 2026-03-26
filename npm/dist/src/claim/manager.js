@@ -11,6 +11,7 @@ exports.verifyPersistentClaim = verifyPersistentClaim;
 const crypto_1 = __importDefault(require("crypto"));
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
+const identity_1 = require("../namespace/identity");
 function stableStringify(value) {
     if (value === null || typeof value !== "object") {
         return JSON.stringify(value);
@@ -24,7 +25,7 @@ function stableStringify(value) {
     return `{${entries.join(",")}}`;
 }
 function normalizeNamespace(raw) {
-    return String(raw || "").trim().toLowerCase();
+    return (0, identity_1.normalizeNamespaceIdentity)(raw);
 }
 function ensureDirectory(dirPath) {
     fs_1.default.mkdirSync(dirPath, { recursive: true });

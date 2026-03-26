@@ -1,5 +1,6 @@
 import fs from "fs";
 import path from "path";
+import { normalizeNamespaceIdentity, parseNamespaceIdentityParts } from "../namespace/identity";
 
 export interface SelfNodeConfig {
   identity: string;
@@ -7,6 +8,38 @@ export interface SelfNodeConfig {
   endpoint: string;
   hostname: string;
   configPath: string;
+  type?: SelfSurfaceType;
+  trust?: SelfSurfaceTrust;
+  resources?: string[];
+  capacity?: Partial<SelfSurfaceCapacity>;
+}
+
+export type SelfSurfaceType = "desktop" | "mobile" | "server" | "browser-tab" | "node";
+export type SelfSurfaceTrust = "owner" | "trusted-peer" | "guest";
+export type SelfSurfaceAvailability = "online" | "offline" | "sleep" | "unknown";
+
+export interface SelfSurfaceCapacity {
+  cpuCores: number | null;
+  ramGb: number | null;
+  storageGb: number | null;
+  bandwidthMbps: number | null;
+}
+
+export interface SelfSurfaceEntry {
+  hostId: string;
+  type: SelfSurfaceType;
+  trust: SelfSurfaceTrust;
+  resources: string[];
+  capacity: SelfSurfaceCapacity;
+  status: {
+    availability: SelfSurfaceAvailability;
+    latencyMs: number | null;
+    syncState: "current" | "stale" | "unknown";
+    lastSeen: number | null;
+  };
+  namespace: string;
+  endpoint: string;
+  rootName: string;
 }
 
 export type SelfDispatchMode = "unconfigured" | "foreign" | "local" | "remote" | "unscoped";
@@ -31,7 +64,7 @@ type SelectorClause = {
 };
 
 function normalizeNamespace(input: unknown) {
-  return String(input || "").trim().toLowerCase();
+  return normalizeNamespaceIdentity(input);
 }
 
 function normalizeToken(input: unknown) {
@@ -70,6 +103,191 @@ function extractEndpointHost(endpoint: string) {
   } catch {
     return normalizeToken(raw.replace(/^https?:\/\//i, "").split("/")[0].split(":")[0]);
   }
+}
+
+function extractEndpointParts(endpoint: string) {
+  const raw = String(endpoint || "").trim();
+  if (!raw) {
+    return {
+      protocol: "http:",
+      hostname: "",
+      port: "",
+      normalized: "",
+    };
+  }
+
+  try {
+    const parsed = new URL(raw);
+    return {
+      protocol: parsed.protocol || "http:",
+      hostname: normalizeToken(parsed.hostname),
+      port: String(parsed.port || "").trim(),
+      normalized: parsed.toString().replace(/\/+$/, ""),
+    };
+  } catch {
+    const noProto = raw.replace(/^https?:\/\//i, "");
+    const hostPart = noProto.split("/")[0] || "";
+    const hostname = normalizeToken(hostPart.split(":")[0] || "");
+    const port = String(hostPart.split(":")[1] || "").trim();
+    return {
+      protocol: /^https:\/\//i.test(raw) ? "https:" : "http:",
+      hostname,
+      port,
+      normalized: raw.replace(/\/+$/, ""),
+    };
+  }
+}
+
+function isLoopbackishHost(host: string) {
+  const normalized = normalizeToken(host);
+  return /^(localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0)$/.test(normalized);
+}
+
+function isLikelyLocalHost(host: string) {
+  const normalized = normalizeToken(host);
+  return Boolean(normalized) && (isLoopbackishHost(normalized) || normalized.endsWith(".local"));
+}
+
+function normalizeSurfaceType(raw: unknown): SelfSurfaceType | null {
+  const value = String(raw || "").trim().toLowerCase();
+  if (
+    value === "desktop" ||
+    value === "mobile" ||
+    value === "server" ||
+    value === "browser-tab" ||
+    value === "node"
+  ) {
+    return value;
+  }
+  return null;
+}
+
+function normalizeSurfaceTrust(raw: unknown): SelfSurfaceTrust | null {
+  const value = String(raw || "").trim().toLowerCase();
+  if (value === "owner" || value === "trusted-peer" || value === "guest") {
+    return value;
+  }
+  return null;
+}
+
+function inferSurfaceType(host: string): SelfSurfaceType {
+  const normalized = normalizeToken(host);
+  if (!normalized) return "node";
+  if (/(iphone|ipad|android|pixel|mobile)/.test(normalized)) return "mobile";
+  if (/(tab|browser)/.test(normalized)) return "browser-tab";
+  if (/(macbook|imac|desktop|laptop|notebook|pc|workstation|\.local$)/.test(normalized)) {
+    return "desktop";
+  }
+  if (isLoopbackishHost(normalized)) return "desktop";
+  return "server";
+}
+
+function inferSurfaceTrust(host: string, endpointHost: string): SelfSurfaceTrust {
+  return isLikelyLocalHost(host) || isLikelyLocalHost(endpointHost) ? "owner" : "trusted-peer";
+}
+
+function toNumberOrNull(input: unknown): number | null {
+  if (typeof input === "number" && Number.isFinite(input)) return input;
+  if (typeof input === "string" && input.trim()) {
+    const parsed = Number(input);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return null;
+}
+
+function normalizeSurfaceCapacity(input: unknown): SelfSurfaceCapacity {
+  const raw = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
+  return {
+    cpuCores: toNumberOrNull(raw.cpuCores),
+    ramGb: toNumberOrNull(raw.ramGb),
+    storageGb: toNumberOrNull(raw.storageGb),
+    bandwidthMbps: toNumberOrNull(raw.bandwidthMbps),
+  };
+}
+
+function inferResources(
+  type: SelfSurfaceType,
+  host: string,
+  endpointHost: string,
+  configured: string[],
+): string[] {
+  const resources = new Set(configured.map((value) => normalizeToken(value)).filter(Boolean));
+
+  resources.add("public_ingress");
+  resources.add("keychain");
+
+  if (type === "desktop") {
+    resources.add("filesystem");
+    resources.add("gpu");
+    resources.add("camera");
+  } else if (type === "mobile") {
+    resources.add("camera");
+  } else if (type === "server") {
+    resources.add("filesystem");
+  }
+
+  if (isLikelyLocalHost(host) || isLikelyLocalHost(endpointHost)) {
+    resources.add("local_lan");
+  }
+
+  return Array.from(resources);
+}
+
+function resolveSurfaceRootName(identity: string, fallbackHost: string) {
+  const parsed = parseNamespaceIdentityParts(identity);
+  const host = normalizeToken(parsed.host);
+  if (host && host !== "unknown") return host;
+  return normalizeToken(fallbackHost);
+}
+
+export function buildSelfSurfaceEntry(input: {
+  self: SelfNodeConfig | null;
+  origin: string;
+  fallbackHost: string;
+  requestNamespace: string;
+  now?: number;
+}): SelfSurfaceEntry {
+  const now = typeof input.now === "number" ? input.now : Date.now();
+  const originParts = extractEndpointParts(input.origin);
+  const endpointParts = extractEndpointParts(input.self?.endpoint || input.origin);
+  const hostId =
+    normalizeToken(input.self?.hostname) ||
+    endpointParts.hostname ||
+    originParts.hostname ||
+    normalizeToken(input.fallbackHost) ||
+    "unknown-host";
+  const endpointHost = endpointParts.hostname || originParts.hostname || hostId;
+  const namespaceHost =
+    isLoopbackishHost(endpointHost) && hostId
+      ? hostId
+      : endpointHost || hostId;
+  const protocol = endpointParts.protocol || originParts.protocol || "http:";
+  const port = endpointParts.port || originParts.port;
+  const namespace = `${protocol}//${namespaceHost}${port ? `:${port}` : ""}`;
+  const endpoint = endpointParts.normalized || originParts.normalized || input.origin.trim();
+  const type = normalizeSurfaceType(input.self?.type) || inferSurfaceType(hostId);
+  const trust = normalizeSurfaceTrust(input.self?.trust) || inferSurfaceTrust(hostId, endpointHost);
+  const rootName = resolveSurfaceRootName(
+    input.self?.identity || input.requestNamespace,
+    namespaceHost || hostId,
+  );
+
+  return {
+    hostId,
+    type,
+    trust,
+    resources: inferResources(type, hostId, endpointHost, input.self?.resources || []),
+    capacity: normalizeSurfaceCapacity(input.self?.capacity),
+    status: {
+      availability: "online",
+      latencyMs: null,
+      syncState: "current",
+      lastSeen: now,
+    },
+    namespace,
+    endpoint,
+    rootName,
+  };
 }
 
 export function parseSelectorGroups(selectorRaw: string | null): SelectorClause[][] {
@@ -157,6 +375,17 @@ export function loadSelfNodeConfig(input: {
     normalizeToken(hostname),
     extractEndpointHost(endpoint),
   ]);
+  const type =
+    normalizeSurfaceType(input.env.MONAD_SELF_TYPE) ||
+    normalizeSurfaceType(fileConfig.type);
+  const trust =
+    normalizeSurfaceTrust(input.env.MONAD_SELF_TRUST) ||
+    normalizeSurfaceTrust(fileConfig.trust);
+  const resources = uniq([
+    ...toArray(fileConfig.resources),
+    ...toArray(input.env.MONAD_SELF_RESOURCES),
+  ]);
+  const capacity = normalizeSurfaceCapacity(fileConfig.capacity);
 
   return {
     identity,
@@ -164,6 +393,10 @@ export function loadSelfNodeConfig(input: {
     endpoint,
     hostname,
     configPath,
+    type: type || undefined,
+    trust: trust || undefined,
+    resources,
+    capacity,
   };
 }
 

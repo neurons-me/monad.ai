@@ -2,8 +2,10 @@ import express from "express";
 import crypto from "crypto";
 import { claimNamespace, openNamespace } from "../claim/records";
 import { getMemoriesForNamespace } from "../claim/replay";
+import { appendSemanticMemory } from "../claim/memoryStore";
 import { normalizeHttpRequestToMeTarget } from "./meTarget";
 import { createEnvelope, createErrorEnvelope } from "./envelope";
+import { parseNamespaceIdentityParts } from "../namespace/identity";
 
 function toStableJson(value: unknown): string {
   if (value === null || typeof value !== "object") {
@@ -28,44 +30,7 @@ function computeProofId(input: Record<string, unknown>) {
 }
 
 function parseNamespaceIdentity(namespace: string) {
-  const ns = String(namespace || "").trim().toLowerCase();
-  if (!ns) {
-    return {
-      host: "unknown",
-      username: "",
-      effective: "unclaimed",
-    };
-  }
-
-  const userMatch = ns.match(/^([^\/]+)\/users\/([^\/]+)$/i);
-  if (userMatch) {
-    const host = String(userMatch[1] || "").trim();
-    const username = String(userMatch[2] || "").trim();
-    return {
-      host,
-      username,
-      effective: `@${username}.${host}`,
-    };
-  }
-
-  const dotParts = ns.split(".").filter(Boolean);
-  if (dotParts.length >= 3) {
-    const username = dotParts[0] || "";
-    const host = dotParts.slice(1).join(".");
-    if (username && host) {
-      return {
-        host,
-        username,
-        effective: `@${username}.${host}`,
-      };
-    }
-  }
-
-  return {
-    host: ns,
-    username: "",
-    effective: `@${ns}`,
-  };
+  return parseNamespaceIdentityParts(namespace);
 }
 
 function getDefaultReadPolicy(namespace: string) {
@@ -80,14 +45,55 @@ function getDefaultReadPolicy(namespace: string) {
   };
 }
 
+function normalizeEmail(input: unknown): string {
+  return String(input || "").trim().toLowerCase();
+}
+
+function normalizePhone(input: unknown): string {
+  return String(input || "").trim();
+}
+
+function normalizeUsername(input: unknown): string {
+  return String(input || "").trim().toLowerCase();
+}
+
+function validateClaimProfile(body: Record<string, unknown>, namespace: string) {
+  const identity = parseNamespaceIdentity(namespace);
+  const username = normalizeUsername(body.username);
+  const email = normalizeEmail(body.email);
+  const phone = normalizePhone(body.phone);
+
+  if (!username) return { ok: false as const, error: "USERNAME_REQUIRED" };
+  if (!email) return { ok: false as const, error: "EMAIL_REQUIRED" };
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false as const, error: "EMAIL_INVALID" };
+  if (!phone) return { ok: false as const, error: "PHONE_REQUIRED" };
+  if (phone.replace(/\D/g, "").length < 8) return { ok: false as const, error: "PHONE_INVALID" };
+  if (identity.username && username !== identity.username) {
+    return { ok: false as const, error: "USERNAME_NAMESPACE_MISMATCH" };
+  }
+
+  return {
+    ok: true as const,
+    username,
+    email,
+    phone,
+  };
+}
+
 export function createClaimsRouter() {
   const router = express.Router();
 
   router.post("/claims", (req: express.Request, res: express.Response) => {
     const target = normalizeHttpRequestToMeTarget(req);
     const body = req.body ?? {};
+    const namespace = String(body.namespace || "");
+    const profile = validateClaimProfile(body as Record<string, unknown>, namespace);
+    if (!profile.ok) {
+      return res.status(400).json(createErrorEnvelope(target, { error: profile.error }));
+    }
+
     const out = claimNamespace({
-      namespace: String(body.namespace || ""),
+      namespace,
       secret: String(body.secret || ""),
       publicKey: String(body.publicKey || "").trim() || null,
       privateKey: String(body.privateKey || "").trim() || null,
@@ -106,11 +112,39 @@ export function createClaimsRouter() {
       return res.status(status).json(createErrorEnvelope(target, { error: out.error }));
     }
 
+    const timestamp = Date.now();
+    appendSemanticMemory({
+      namespace: out.record.namespace,
+      path: "profile.username",
+      operator: "=",
+      data: profile.username,
+      timestamp,
+    });
+    appendSemanticMemory({
+      namespace: out.record.namespace,
+      path: "profile.email",
+      operator: "=",
+      data: profile.email,
+      timestamp,
+    });
+    appendSemanticMemory({
+      namespace: out.record.namespace,
+      path: "profile.phone",
+      operator: "=",
+      data: profile.phone,
+      timestamp,
+    });
+
     return res.status(201).json(createEnvelope(target, {
       namespace: out.record.namespace,
       identityHash: out.record.identityHash,
       publicKey: out.record.publicKey,
       createdAt: out.record.createdAt,
+      profile: {
+        username: profile.username,
+        email: profile.email,
+        phone: profile.phone,
+      },
       persistentClaim: out.persistentClaim,
     }));
   });

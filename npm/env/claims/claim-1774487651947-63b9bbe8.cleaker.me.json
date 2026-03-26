@@ -1,0 +1,24 @@
+{
+  "kind": "PersistentClaimV1",
+  "version": 1,
+  "namespace": "claim-1774487651947-63b9bbe8.cleaker.me",
+  "identityHash": "cf13c1107d9d1214c710dc941b2acb5307ff38daa1a9511f3e09ac814dccf754",
+  "publicKey": {
+    "kid": "sha256:17b904aed28e646e46cf0d1f3e09bdf92ac559b5afde8d05dd70567d3eb0d5f1",
+    "alg": "ed25519",
+    "key": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEApwpc2ANu3ZLJS+oTqcXDVUWxQKt9BCXjqnkHjjtAnOY=\n-----END PUBLIC KEY-----\n",
+    "source": "generated"
+  },
+  "proofKey": {
+    "kid": "sha256:17b904aed28e646e46cf0d1f3e09bdf92ac559b5afde8d05dd70567d3eb0d5f1",
+    "alg": "ed25519",
+    "key": "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEApwpc2ANu3ZLJS+oTqcXDVUWxQKt9BCXjqnkHjjtAnOY=\n-----END PUBLIC KEY-----\n",
+    "source": "generated"
+  },
+  "issuedAt": 1774487652014,
+  "signature": {
+    "alg": "ed25519",
+    "value": "Dt57a+VGfAUvzOcEeqAnU/wGiS3V5ezURhF5W7V73UXtyqWGHZg0EozHf1L1kJLJSXkbgGk0oRwG8nvr+c4TBQ==",
+    "encoding": "base64"
+  }
+}

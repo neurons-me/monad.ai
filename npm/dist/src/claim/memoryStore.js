@@ -6,8 +6,10 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.createSessionNonce = createSessionNonce;
 exports.consumeSessionNonce = consumeSessionNonce;
 exports.appendSemanticMemory = appendSemanticMemory;
+exports.listSemanticMemoriesByNamespace = listSemanticMemoriesByNamespace;
 exports.rebuildAuthorizedHostsProjection = rebuildAuthorizedHostsProjection;
 exports.listHostsByUsername = listHostsByUsername;
+exports.listHostsByNamespace = listHostsByNamespace;
 exports.getHostStatus = getHostStatus;
 exports.listHostMemoryHistory = listHostMemoryHistory;
 const crypto_1 = __importDefault(require("crypto"));
@@ -43,9 +45,12 @@ ON session_nonces(exp);
 
 CREATE TABLE IF NOT EXISTS authorized_hosts (
   id TEXT PRIMARY KEY,
+  namespace TEXT NOT NULL,
   username TEXT NOT NULL,
+  host_key TEXT NOT NULL,
   fingerprint TEXT NOT NULL,
   public_key TEXT NOT NULL,
+  hostname TEXT NOT NULL,
   label TEXT NOT NULL,
   local_endpoint TEXT NOT NULL,
   attestation TEXT NOT NULL,
@@ -54,17 +59,121 @@ CREATE TABLE IF NOT EXISTS authorized_hosts (
   created_at INTEGER NOT NULL,
   last_used INTEGER NOT NULL,
   revoked_at INTEGER,
-  UNIQUE(username, fingerprint)
+  UNIQUE(namespace, username, host_key)
 );
-
-CREATE INDEX IF NOT EXISTS idx_authorized_hosts_username
-ON authorized_hosts(username);
 
 CREATE INDEX IF NOT EXISTS idx_authorized_hosts_status
 ON authorized_hosts(status);
 `);
+function hasAuthorizedHostColumn(name) {
+    const rows = db_1.db.prepare(`PRAGMA table_info(authorized_hosts)`).all();
+    return rows.some((row) => String(row.name || "").trim().toLowerCase() === String(name || "").trim().toLowerCase());
+}
+function migrateAuthorizedHostsSchema() {
+    const hasNamespace = hasAuthorizedHostColumn("namespace");
+    const hasHostKey = hasAuthorizedHostColumn("host_key");
+    const hasHostname = hasAuthorizedHostColumn("hostname");
+    if (hasNamespace && hasHostKey && hasHostname)
+        return;
+    db_1.db.exec(`
+    CREATE TABLE IF NOT EXISTS authorized_hosts_v2 (
+      id TEXT PRIMARY KEY,
+      namespace TEXT NOT NULL,
+      username TEXT NOT NULL,
+      host_key TEXT NOT NULL,
+      fingerprint TEXT NOT NULL,
+      public_key TEXT NOT NULL,
+      hostname TEXT NOT NULL,
+      label TEXT NOT NULL,
+      local_endpoint TEXT NOT NULL,
+      attestation TEXT NOT NULL,
+      capabilities_json TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      last_used INTEGER NOT NULL,
+      revoked_at INTEGER,
+      UNIQUE(namespace, username, host_key)
+    );
+  `);
+    db_1.db.exec(`
+    INSERT OR IGNORE INTO authorized_hosts_v2 (
+      id, namespace, username, host_key, fingerprint, public_key, hostname, label,
+      local_endpoint, attestation, capabilities_json, status, created_at, last_used, revoked_at
+    )
+    SELECT
+      id,
+      CASE
+        WHEN username IS NOT NULL AND TRIM(username) <> '' THEN LOWER(TRIM(username)) || '.cleaker.me'
+        ELSE 'unknown'
+      END AS namespace,
+      username,
+      CASE
+        WHEN label IS NOT NULL AND TRIM(label) <> '' THEN LOWER(REPLACE(REPLACE(TRIM(label), '.local', ''), ' ', '-'))
+        WHEN fingerprint IS NOT NULL AND TRIM(fingerprint) <> '' THEN LOWER(TRIM(fingerprint))
+        ELSE 'host'
+      END AS host_key,
+      fingerprint,
+      public_key,
+      '' AS hostname,
+      label,
+      local_endpoint,
+      attestation,
+      capabilities_json,
+      status,
+      created_at,
+      last_used,
+      revoked_at
+    FROM authorized_hosts;
+  `);
+    db_1.db.exec(`DROP TABLE authorized_hosts;`);
+    db_1.db.exec(`ALTER TABLE authorized_hosts_v2 RENAME TO authorized_hosts;`);
+    db_1.db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_authorized_hosts_namespace_username
+    ON authorized_hosts(namespace, username);
+  `);
+    db_1.db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_authorized_hosts_status
+    ON authorized_hosts(status);
+  `);
+}
+migrateAuthorizedHostsSchema();
+if (hasAuthorizedHostColumn("namespace")) {
+    db_1.db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_authorized_hosts_namespace_username
+    ON authorized_hosts(namespace, username);
+  `);
+}
 function normalizeUsername(input) {
     return String(input || "").trim().toLowerCase();
+}
+function normalizeHostKey(input) {
+    return String(input || "")
+        .trim()
+        .toLowerCase()
+        .replace(/\.local$/i, "")
+        .replace(/[^a-z0-9_-]/g, "-")
+        .replace(/-+/g, "-")
+        .replace(/^-+|-+$/g, "");
+}
+function parseEndpointHost(input) {
+    const raw = String(input || "").trim();
+    if (!raw)
+        return "";
+    try {
+        return String(new URL(raw).hostname || "").trim().toLowerCase();
+    }
+    catch {
+        return raw
+            .replace(/^https?:\/\//i, "")
+            .split("/")[0]
+            .split(":")[0]
+            .trim()
+            .toLowerCase();
+    }
+}
+function isLoopbackishHost(host) {
+    const normalized = String(host || "").trim().toLowerCase();
+    return /^(localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0)$/.test(normalized);
 }
 function parseJsonSafe(raw) {
     try {
@@ -95,45 +204,72 @@ function computeHash(input) {
     }));
     return h.digest("hex");
 }
-function parseHostPath(path) {
-    const match = String(path || "").match(/^([a-z0-9._-]+)\.cleaker\.me\/hosts\/([^/]+)\/([a-z_]+)$/i);
-    if (!match)
+function parseHostPath(memory) {
+    const namespace = String(memory.namespace || "").trim().toLowerCase();
+    const path = String(memory.path || "").trim();
+    const relative = path.match(/^host\.([a-z0-9_-]+)\.([a-z_]+)$/i);
+    if (relative) {
+        const username = normalizeUsername(String(namespace.split(".")[0] || ""));
+        const hostKey = normalizeHostKey(String(relative[1] || ""));
+        const field = String(relative[2] || "").trim();
+        if (!username || !hostKey)
+            return null;
+        if (!["fingerprint", "status", "capabilities", "last_seen", "local_endpoint", "public_key", "label", "hostname", "attestation"].includes(field)) {
+            return null;
+        }
+        return { namespace, username, hostKey, field };
+    }
+    const legacy = path.match(/^([a-z0-9._-]+)\.cleaker\.me\/hosts\/([^/]+)\/([a-z_]+)$/i);
+    if (!legacy)
         return null;
-    const username = normalizeUsername(match[1]);
-    const fingerprint = String(match[2] || "").trim();
-    const field = String(match[3] || "").trim();
-    if (!username || !fingerprint)
+    const username = normalizeUsername(String(legacy[1] || ""));
+    const hostKey = normalizeHostKey(String(legacy[2] || ""));
+    const field = String(legacy[3] || "").trim();
+    if (!username || !hostKey)
         return null;
     if (!["status", "capabilities", "last_seen", "local_endpoint", "public_key", "label", "attestation"].includes(field))
         return null;
-    return { username, fingerprint, field };
+    return {
+        namespace: namespace || `${username}.cleaker.me`,
+        username,
+        hostKey,
+        field,
+    };
 }
-function ensureHostBase(username, fingerprint, timestamp) {
+function ensureHostBase(namespace, username, hostKey, timestamp) {
     const existing = db_1.db.prepare(`
-    SELECT id FROM authorized_hosts WHERE username = ? AND fingerprint = ?
-  `).get(username, fingerprint);
+    SELECT id FROM authorized_hosts WHERE namespace = ? AND username = ? AND host_key = ?
+  `).get(namespace, username, hostKey);
     if (existing)
         return;
     db_1.db.prepare(`
     INSERT INTO authorized_hosts (
-      id, username, fingerprint, public_key, label, local_endpoint, attestation,
+      id, namespace, username, host_key, fingerprint, public_key, hostname, label, local_endpoint, attestation,
       capabilities_json, status, created_at, last_used, revoked_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(crypto_1.default.randomUUID(), username, fingerprint, "", "", "localhost:8161", "", "[]", "authorized", timestamp, timestamp, null);
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(crypto_1.default.randomUUID(), namespace, username, hostKey, "", "", "", hostKey, "localhost:8161", "", "[]", "authorized", timestamp, timestamp, null);
 }
 function projectHostMemory(memory) {
-    const parsed = parseHostPath(memory.path);
+    const parsed = parseHostPath(memory);
     if (!parsed)
         return;
-    ensureHostBase(parsed.username, parsed.fingerprint, memory.timestamp);
+    ensureHostBase(parsed.namespace, parsed.username, parsed.hostKey, memory.timestamp);
     switch (parsed.field) {
+        case "fingerprint": {
+            db_1.db.prepare(`
+        UPDATE authorized_hosts
+        SET fingerprint = ?, last_used = ?
+        WHERE namespace = ? AND username = ? AND host_key = ?
+      `).run(String(memory.data || ""), memory.timestamp, parsed.namespace, parsed.username, parsed.hostKey);
+            break;
+        }
         case "status": {
             const status = String(memory.data || "").toLowerCase() === "revoked" ? "revoked" : "authorized";
             db_1.db.prepare(`
         UPDATE authorized_hosts
         SET status = ?, last_used = ?, revoked_at = CASE WHEN ? = 'revoked' THEN ? ELSE NULL END
-        WHERE username = ? AND fingerprint = ?
-      `).run(status, memory.timestamp, status, memory.timestamp, parsed.username, parsed.fingerprint);
+        WHERE namespace = ? AND username = ? AND host_key = ?
+      `).run(status, memory.timestamp, status, memory.timestamp, parsed.namespace, parsed.username, parsed.hostKey);
             break;
         }
         case "capabilities": {
@@ -141,8 +277,8 @@ function projectHostMemory(memory) {
             db_1.db.prepare(`
         UPDATE authorized_hosts
         SET capabilities_json = ?, last_used = ?
-        WHERE username = ? AND fingerprint = ?
-      `).run(JSON.stringify(capabilities), memory.timestamp, parsed.username, parsed.fingerprint);
+        WHERE namespace = ? AND username = ? AND host_key = ?
+      `).run(JSON.stringify(capabilities), memory.timestamp, parsed.namespace, parsed.username, parsed.hostKey);
             break;
         }
         case "last_seen": {
@@ -150,40 +286,48 @@ function projectHostMemory(memory) {
             db_1.db.prepare(`
         UPDATE authorized_hosts
         SET last_used = ?
-        WHERE username = ? AND fingerprint = ?
-      `).run(Number.isFinite(lastSeen) ? lastSeen : memory.timestamp, parsed.username, parsed.fingerprint);
+        WHERE namespace = ? AND username = ? AND host_key = ?
+      `).run(Number.isFinite(lastSeen) ? lastSeen : memory.timestamp, parsed.namespace, parsed.username, parsed.hostKey);
             break;
         }
         case "local_endpoint": {
             db_1.db.prepare(`
         UPDATE authorized_hosts
         SET local_endpoint = ?, last_used = ?
-        WHERE username = ? AND fingerprint = ?
-      `).run(String(memory.data || "localhost:8161"), memory.timestamp, parsed.username, parsed.fingerprint);
+        WHERE namespace = ? AND username = ? AND host_key = ?
+      `).run(String(memory.data || "localhost:8161"), memory.timestamp, parsed.namespace, parsed.username, parsed.hostKey);
             break;
         }
         case "public_key": {
             db_1.db.prepare(`
         UPDATE authorized_hosts
         SET public_key = ?, last_used = ?
-        WHERE username = ? AND fingerprint = ?
-      `).run(String(memory.data || ""), memory.timestamp, parsed.username, parsed.fingerprint);
+        WHERE namespace = ? AND username = ? AND host_key = ?
+      `).run(String(memory.data || ""), memory.timestamp, parsed.namespace, parsed.username, parsed.hostKey);
             break;
         }
         case "label": {
             db_1.db.prepare(`
         UPDATE authorized_hosts
         SET label = ?, last_used = ?
-        WHERE username = ? AND fingerprint = ?
-      `).run(String(memory.data || ""), memory.timestamp, parsed.username, parsed.fingerprint);
+        WHERE namespace = ? AND username = ? AND host_key = ?
+      `).run(String(memory.data || ""), memory.timestamp, parsed.namespace, parsed.username, parsed.hostKey);
+            break;
+        }
+        case "hostname": {
+            db_1.db.prepare(`
+        UPDATE authorized_hosts
+        SET hostname = ?, last_used = ?
+        WHERE namespace = ? AND username = ? AND host_key = ?
+      `).run(String(memory.data || ""), memory.timestamp, parsed.namespace, parsed.username, parsed.hostKey);
             break;
         }
         case "attestation": {
             db_1.db.prepare(`
         UPDATE authorized_hosts
         SET attestation = ?, last_used = ?
-        WHERE username = ? AND fingerprint = ?
-      `).run(String(memory.data || ""), memory.timestamp, parsed.username, parsed.fingerprint);
+        WHERE namespace = ? AND username = ? AND host_key = ?
+      `).run(String(memory.data || ""), memory.timestamp, parsed.namespace, parsed.username, parsed.hostKey);
             break;
         }
         default:
@@ -263,6 +407,40 @@ function appendSemanticMemory(input) {
     });
     return tx();
 }
+function listSemanticMemoriesByNamespace(namespaceInput, options = {}) {
+    const namespace = String(namespaceInput || "").trim().toLowerCase();
+    if (!namespace)
+        return [];
+    const prefix = String(options.prefix || "").trim();
+    const limit = Math.max(1, Math.min(5000, Number(options.limit || 500)));
+    const like = prefix ? `${prefix}%` : null;
+    const rows = like
+        ? db_1.db.prepare(`
+      SELECT id, namespace, path, operator, data, hash, prevHash, signature, timestamp
+      FROM semantic_memories
+      WHERE namespace = ? AND path LIKE ?
+      ORDER BY id ASC
+      LIMIT ?
+    `).all(namespace, like, limit)
+        : db_1.db.prepare(`
+      SELECT id, namespace, path, operator, data, hash, prevHash, signature, timestamp
+      FROM semantic_memories
+      WHERE namespace = ?
+      ORDER BY id ASC
+      LIMIT ?
+    `).all(namespace, limit);
+    return rows.map((row) => ({
+        id: row.id,
+        namespace: row.namespace,
+        path: row.path,
+        operator: row.operator,
+        data: parseJsonSafe(row.data),
+        hash: row.hash,
+        prevHash: row.prevHash,
+        signature: row.signature,
+        timestamp: row.timestamp,
+    }));
+}
 function rebuildAuthorizedHostsProjection(usernameInput) {
     const username = usernameInput ? normalizeUsername(usernameInput) : "";
     if (username) {
@@ -274,10 +452,25 @@ function rebuildAuthorizedHostsProjection(usernameInput) {
     const rows = db_1.db.prepare(`
     SELECT id, namespace, path, operator, data, hash, prevHash, signature, timestamp
     FROM semantic_memories
-    WHERE path LIKE ?
+    WHERE path LIKE ? OR path LIKE ?
     ORDER BY id ASC
-  `).all(username ? `${username}.cleaker.me/hosts/%` : `%.cleaker.me/hosts/%`);
+  `).all("host.%", "%/hosts/%");
     for (const row of rows) {
+        if (username) {
+            const parsed = parseHostPath({
+                id: row.id,
+                namespace: row.namespace,
+                path: row.path,
+                operator: row.operator,
+                data: parseJsonSafe(row.data),
+                hash: row.hash,
+                prevHash: row.prevHash,
+                signature: row.signature,
+                timestamp: row.timestamp,
+            });
+            if (!parsed || parsed.username !== username)
+                continue;
+        }
         projectHostMemory({
             id: row.id,
             namespace: row.namespace,
@@ -293,15 +486,44 @@ function rebuildAuthorizedHostsProjection(usernameInput) {
     return rows.length;
 }
 function listHostsByUsername(usernameInput) {
+    return listHostsByNamespace("", usernameInput);
+}
+function listHostsByNamespace(namespaceInput, usernameInput) {
+    const namespace = String(namespaceInput || "").trim().toLowerCase();
     const username = normalizeUsername(usernameInput);
     if (!username)
         return [];
-    return db_1.db.prepare(`
+    const query = namespace
+        ? db_1.db.prepare(`
     SELECT
       id,
+      namespace,
       username,
+      host_key,
       fingerprint,
       public_key,
+      hostname,
+      label,
+      local_endpoint,
+      attestation,
+      capabilities_json,
+      status,
+      created_at,
+      last_used,
+      revoked_at
+    FROM authorized_hosts
+    WHERE namespace = ? AND username = ?
+    ORDER BY last_used DESC
+  `)
+        : db_1.db.prepare(`
+    SELECT
+      id,
+      namespace,
+      username,
+      host_key,
+      fingerprint,
+      public_key,
+      hostname,
       label,
       local_endpoint,
       attestation,
@@ -313,33 +535,41 @@ function listHostsByUsername(usernameInput) {
     FROM authorized_hosts
     WHERE username = ?
     ORDER BY last_used DESC
-  `).all(username);
+  `);
+    return (namespace ? query.all(namespace, username) : query.all(username));
 }
-function getHostStatus(usernameInput, fingerprintInput) {
+function getHostStatus(namespaceInput, usernameInput, fingerprintInput) {
+    const namespace = String(namespaceInput || "").trim().toLowerCase();
     const username = normalizeUsername(usernameInput);
     const fingerprint = String(fingerprintInput || "").trim();
-    if (!username || !fingerprint)
+    if (!namespace || !username || !fingerprint)
         return null;
     const row = db_1.db.prepare(`
     SELECT status FROM authorized_hosts WHERE username = ? AND fingerprint = ?
-  `).get(username, fingerprint);
+    AND namespace = ?
+  `).get(username, fingerprint, namespace);
     return row?.status || null;
 }
-function listHostMemoryHistory(usernameInput, fingerprintInput, limitInput = 200) {
+function listHostMemoryHistory(namespaceInput, usernameInput, fingerprintInput, limitInput = 200) {
+    const namespace = String(namespaceInput || "").trim().toLowerCase();
     const username = normalizeUsername(usernameInput);
     const fingerprint = String(fingerprintInput || "").trim();
-    if (!username || !fingerprint)
+    if (!namespace || !username || !fingerprint)
         return [];
-    const namespace = `${username}.cleaker.me`;
     const limit = Math.max(1, Math.min(2000, Number(limitInput || 200)));
-    const prefix = `${namespace}/hosts/${fingerprint}/`;
+    const host = db_1.db.prepare(`
+    SELECT host_key FROM authorized_hosts WHERE namespace = ? AND username = ? AND fingerprint = ?
+  `).get(namespace, username, fingerprint);
+    const hostKey = normalizeHostKey(String(host?.host_key || fingerprint));
+    const modernPrefix = `host.${hostKey}.`;
+    const legacyPrefix = `${namespace}/hosts/${fingerprint}/`;
     const rows = db_1.db.prepare(`
     SELECT id, namespace, path, operator, data, hash, prevHash, signature, timestamp
     FROM semantic_memories
-    WHERE namespace = ? AND path LIKE ?
+    WHERE namespace = ? AND (path LIKE ? OR path LIKE ?)
     ORDER BY id DESC
     LIMIT ?
-  `).all(namespace, `${prefix}%`, limit);
+  `).all(namespace, `${modernPrefix}%`, `${legacyPrefix}%`, limit);
     return rows.map((row) => ({
         id: row.id,
         namespace: row.namespace,
@@ -350,6 +580,7 @@ function listHostMemoryHistory(usernameInput, fingerprintInput, limitInput = 200
         prevHash: row.prevHash,
         signature: row.signature,
         timestamp: row.timestamp,
+        host_key: hostKey,
         username,
         fingerprint,
     }));

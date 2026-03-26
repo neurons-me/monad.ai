@@ -1,4 +1,11 @@
 import type express from "express";
+import {
+  composeProjectedNamespace,
+  isProjectableNamespaceRoot,
+  normalizeNamespaceConstant,
+  normalizeNamespaceIdentity,
+  parseNamespaceIdentityParts,
+} from "../namespace/identity";
 
 export type ObserverRelationMode = "raw" | "self" | "observer" | "view";
 
@@ -30,7 +37,7 @@ export function resolveHostNamespace(req: express.Request) {
   const first = String(hostHeaderRaw).split(",")[0].trim();
   const noProto = first.replace(/^https?:\/\//i, "");
   const hostnameOnly = noProto.split(":")[0].trim();
-  return hostnameOnly || "unknown";
+  return normalizeNamespaceIdentity(hostnameOnly) || "unknown";
 }
 
 export function resolveTransportHost(req: express.Request) {
@@ -49,10 +56,7 @@ export function isReservedLabel(label: string) {
 }
 
 export function isProjectableRootHost(hostname: string) {
-  const parts = String(hostname || "").split(".").filter(Boolean);
-  if (parts.length === 1 && parts[0] === "localhost") return true;
-  if (parts.length === 2 && parts[1] === "localhost") return false;
-  return parts.length === 2;
+  return isProjectableNamespaceRoot(hostname);
 }
 
 export function normalizeUsernameLabel(raw: string) {
@@ -102,7 +106,7 @@ export function getAtNestedUserFromPath(req: express.Request) {
 }
 
 export function resolveChainNamespace(req: express.Request) {
-  const host = resolveHostNamespace(req);
+  const host = normalizeNamespaceIdentity(resolveHostNamespace(req));
   if (!host) return "unknown";
 
   const atSel = getAtSelectorFromPath(req);
@@ -110,7 +114,7 @@ export function resolveChainNamespace(req: express.Request) {
   const rootProjectable = isProjectableRootHost(host);
 
   if (atNested) {
-    return rootProjectable ? `${atNested.a}.${host}` : host;
+    return rootProjectable ? composeProjectedNamespace(atNested.a, host) : host;
   }
 
   if (atSel?.kind === "relation") {
@@ -118,7 +122,7 @@ export function resolveChainNamespace(req: express.Request) {
   }
 
   if (atSel?.kind === "user") {
-    return rootProjectable ? `${atSel.username}.${host}` : host;
+    return rootProjectable ? composeProjectedNamespace(atSel.username, host) : host;
   }
 
   return host;
@@ -129,18 +133,7 @@ export function resolveNamespace(req: express.Request) {
 }
 
 export function resolveNamespaceProjectionRoot(namespace: string) {
-  const ns = String(namespace || "").trim().toLowerCase();
-  if (!ns) return "";
-
-  const userMatch = ns.match(/^([^\/]+)\/users\/([^\/]+)$/i);
-  if (userMatch) {
-    return String(userMatch[1] || "").trim().toLowerCase();
-  }
-
-  const dotParts = ns.split(".").filter(Boolean);
-  if (dotParts.length === 2 && dotParts[1] === "localhost") return "localhost";
-  if (dotParts.length <= 2) return ns;
-  return dotParts.slice(1).join(".");
+  return normalizeNamespaceConstant(namespace);
 }
 
 function normalizeNamespaceReference(raw: string) {
@@ -148,17 +141,26 @@ function normalizeNamespaceReference(raw: string) {
     .trim()
     .toLowerCase()
     .replace(/^@+/, "")
-    .replace(/[^a-z0-9._/-]/g, "");
+    .replace(/[^a-z0-9._/\-:\[\]]/g, "");
 }
 
 function resolveObserverReference(raw: string): { observer: string; namespace: string | null } | null {
   const normalized = normalizeNamespaceReference(raw);
   if (!normalized) return null;
 
-  if (normalized.includes(".") || normalized.includes("/")) {
+  if (
+    normalized.includes(".") ||
+    normalized.includes("/") ||
+    normalized.includes("[") ||
+    normalized.includes(":") ||
+    normalized.startsWith("me://") ||
+    normalized.startsWith("nrp://")
+  ) {
+    const namespace = normalizeNamespaceIdentity(normalized);
+    const identity = parseNamespaceIdentityParts(namespace);
     return {
-      observer: normalized,
-      namespace: normalized,
+      observer: identity.username || namespace,
+      namespace,
     };
   }
 
@@ -183,7 +185,7 @@ export function resolveObserverRelation(req: express.Request): ObserverRelation 
     const observerNamespace = resolved.namespace
       ? resolved.namespace
       : isProjectableRootHost(projectionRoot)
-        ? `${resolved.observer}.${projectionRoot}`
+        ? composeProjectedNamespace(resolved.observer, projectionRoot)
         : resolved.observer;
 
     return {

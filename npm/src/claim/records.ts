@@ -2,6 +2,8 @@ import crypto from "crypto";
 import { db } from "../Blockchain/db";
 import { decryptNoise, deriveIdentityHash, deriveUnlockKey, encryptNoise } from "./derive";
 import { buildPersistentClaimBundle, writePersistentClaimBundle } from "./manager";
+import { normalizeNamespaceIdentity, parseNamespaceIdentityParts } from "../namespace/identity";
+import { appendSemanticMemory } from "./memoryStore";
 import type {
   ClaimNamespaceResult,
   ClaimRecord,
@@ -12,7 +14,24 @@ import type {
 } from "./types";
 
 function normalizeNamespace(raw: string) {
-  return String(raw || "").trim().toLowerCase();
+  return normalizeNamespaceIdentity(raw);
+}
+
+function materializeProjectedNamespaceClaim(namespace: string, timestamp: number) {
+  const identity = parseNamespaceIdentityParts(namespace);
+  const hostNamespace = String(identity.host || "").trim().toLowerCase();
+  const username = String(identity.username || "").trim().toLowerCase();
+  const projectedNamespace = normalizeNamespace(namespace);
+
+  if (!hostNamespace || !username || !projectedNamespace) return;
+
+  appendSemanticMemory({
+    namespace: hostNamespace,
+    path: `users.${username}`,
+    operator: "__",
+    data: { __ptr: projectedNamespace },
+    timestamp,
+  });
 }
 
 export function getClaim(namespace: string): ClaimRecord | undefined {
@@ -72,6 +91,7 @@ export function claimNamespace(input: NamespaceClaimInput): ClaimNamespaceResult
     );
 
     persistentClaim = writePersistentClaimBundle(bundle);
+    materializeProjectedNamespaceClaim(namespace, now);
   } catch (error) {
     try {
       db.prepare(`DELETE FROM claims WHERE namespace = ?`).run(namespace);

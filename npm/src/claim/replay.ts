@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import { db } from "../Blockchain/db";
+import { normalizeNamespaceIdentity } from "../namespace/identity";
 
 export type ReplayMemory = {
   payload: unknown;
@@ -21,7 +22,7 @@ type NamespaceWriteAuthInput = {
 };
 
 function normalizeNamespace(raw: string) {
-  return String(raw || "").trim().toLowerCase();
+  return normalizeNamespaceIdentity(raw);
 }
 
 function safeParseJson(raw: string): unknown {

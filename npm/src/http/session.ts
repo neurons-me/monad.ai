@@ -13,14 +13,76 @@ import {
   createSessionNonce,
   getHostStatus,
   listHostMemoryHistory,
-  listHostsByUsername,
+  listHostsByNamespace,
   rebuildAuthorizedHostsProjection,
 } from "../claim/memoryStore";
 import { normalizeHttpRequestToMeTarget } from "./meTarget";
 import { createEnvelope, createErrorEnvelope } from "./envelope";
+import { composeProjectedNamespace } from "../namespace/identity";
+import { resolveNamespace, resolveNamespaceProjectionRoot } from "./namespace";
 
 function normalizeUsername(input: string): string {
   return String(input || "").trim().toLowerCase();
+}
+
+function normalizeHostKey(input: string): string {
+  return String(input || "")
+    .trim()
+    .toLowerCase()
+    .replace(/\.local$/i, "")
+    .replace(/[^a-z0-9_-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function parseEndpointHost(input: string): string {
+  const raw = String(input || "").trim();
+  if (!raw) return "";
+
+  try {
+    return String(new URL(raw).hostname || "").trim().toLowerCase();
+  } catch {
+    return raw
+      .replace(/^https?:\/\//i, "")
+      .split("/")[0]
+      .split(":")[0]
+      .trim()
+      .toLowerCase();
+  }
+}
+
+function isLoopbackishHost(host: string): boolean {
+  const normalized = String(host || "").trim().toLowerCase();
+  return /^(localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0)$/.test(normalized);
+}
+
+function deriveHostLabel(input: {
+  explicitLabel?: string;
+  explicitHostname?: string;
+  localEndpoint?: string;
+  fingerprint: string;
+}): string {
+  const label =
+    normalizeHostKey(input.explicitLabel || "") ||
+    normalizeHostKey(input.explicitHostname || "") ||
+    (() => {
+      const endpointHost = parseEndpointHost(String(input.localEndpoint || ""));
+      if (!endpointHost || isLoopbackishHost(endpointHost)) return "";
+      return normalizeHostKey(endpointHost);
+    })() ||
+    normalizeHostKey(input.fingerprint);
+
+  return label || "host";
+}
+
+function resolveSessionRootNamespace(req: express.Request): string {
+  const resolved = resolveNamespaceProjectionRoot(resolveNamespace(req));
+  return String(resolved || "").trim().toLowerCase();
+}
+
+function resolveUserNamespace(req: express.Request, username: string): string {
+  const root = resolveSessionRootNamespace(req);
+  return composeProjectedNamespace(username, root);
 }
 
 function computeSessionExpiry(iatMs: number, ttlSeconds?: number): number {
@@ -98,17 +160,17 @@ export function createSessionRouter() {
     }
 
     const session = makeCloudSession({ ...body, username });
-    const namespace = `${username}.cleaker.me`;
+    const namespace = resolveUserNamespace(req, username);
     appendSemanticMemory({
       namespace,
-      path: `${namespace}/session/mode`,
+      path: `session.mode`,
       operator: "=",
       data: "cloud",
       timestamp: session.iat,
     });
     appendSemanticMemory({
       namespace,
-      path: `${namespace}/session/last_seen`,
+      path: `session.last_seen`,
       operator: "=",
       data: session.iat,
       timestamp: session.iat,
@@ -127,6 +189,13 @@ export function createSessionRouter() {
     const daemonPublicKey = String(body.host?.daemonPublicKey || "").trim();
     const attestation = String(body.host?.attestation || "").trim();
     const localEndpoint = String(body.host?.local_endpoint || "").trim() || "localhost:8161";
+    const hostLabel = deriveHostLabel({
+      explicitLabel: String(body.host?.label || "").trim(),
+      explicitHostname: String(body.host?.hostname || "").trim(),
+      localEndpoint,
+      fingerprint: hostFingerprint,
+    });
+    const hostname = String(body.host?.hostname || "").trim() || parseEndpointHost(localEndpoint);
 
     if (!username || !nonce || !hostFingerprint || !daemonPublicKey || !attestation) {
       return res.status(400).json(createErrorEnvelope(target, { error: "INVALID_HOST_VERIFY_PAYLOAD" }));
@@ -147,7 +216,9 @@ export function createSessionRouter() {
       return res.status(403).json(createErrorEnvelope(target, { error: "ATTESTATION_INVALID" }));
     }
 
-    if (getHostStatus(username, hostFingerprint) === "revoked") {
+    const namespace = resolveUserNamespace(req, username);
+
+    if (getHostStatus(namespace, username, hostFingerprint) === "revoked") {
       return res.status(403).json(createErrorEnvelope(target, { error: "HOST_REVOKED" }));
     }
 
@@ -170,45 +241,65 @@ export function createSessionRouter() {
       },
     };
 
-    const namespace = `${username}.cleaker.me`;
     appendSemanticMemory({
       namespace,
-      path: `${namespace}/hosts/${hostFingerprint}/status`,
+      path: `host.${hostLabel}.fingerprint`,
+      operator: "=",
+      data: hostFingerprint,
+      timestamp: iat,
+    });
+    appendSemanticMemory({
+      namespace,
+      path: `host.${hostLabel}.label`,
+      operator: "=",
+      data: hostLabel,
+      timestamp: iat,
+    });
+    appendSemanticMemory({
+      namespace,
+      path: `host.${hostLabel}.hostname`,
+      operator: "=",
+      data: hostname,
+      timestamp: iat,
+    });
+    appendSemanticMemory({
+      namespace,
+      path: `host.${hostLabel}.status`,
       operator: "=",
       data: "authorized",
       timestamp: iat,
     });
     appendSemanticMemory({
       namespace,
-      path: `${namespace}/hosts/${hostFingerprint}/capabilities`,
+      path: `host.${hostLabel}.capabilities`,
       operator: "=",
       data: capabilities,
       timestamp: iat,
     });
     appendSemanticMemory({
       namespace,
-      path: `${namespace}/hosts/${hostFingerprint}/last_seen`,
+      path: `host.${hostLabel}.last_seen`,
       operator: "=",
       data: iat,
       timestamp: iat,
     });
     appendSemanticMemory({
       namespace,
-      path: `${namespace}/hosts/${hostFingerprint}/local_endpoint`,
+      path: `host.${hostLabel}.local_endpoint`,
       operator: "=",
       data: localEndpoint,
       timestamp: iat,
     });
     appendSemanticMemory({
       namespace,
-      path: `${namespace}/hosts/${hostFingerprint}/public_key`,
+      path: `host.${hostLabel}.public_key`,
       operator: "=",
       data: daemonPublicKey,
       timestamp: iat,
     });
     appendSemanticMemory({
       namespace,
-      path: `${namespace}/hosts/${hostFingerprint}/attestation`,
+      path: `host.${hostLabel}.attestation`,
       operator: "=",
       data: attestation,
       timestamp: iat,
@@ -216,14 +307,14 @@ export function createSessionRouter() {
     });
     appendSemanticMemory({
       namespace,
-      path: `${namespace}/session/mode`,
+      path: `session.mode`,
       operator: "=",
       data: "host",
       timestamp: iat,
     });
     appendSemanticMemory({
       namespace,
-      path: `${namespace}/session/last_seen`,
+      path: `session.last_seen`,
       operator: "=",
       data: iat,
       timestamp: iat,
@@ -240,11 +331,15 @@ export function createSessionRouter() {
       return res.status(400).json(createErrorEnvelope(target, { error: "USERNAME_REQUIRED" }));
     }
 
-    const hosts = listHostsByUsername(username).map((host) => ({
+    const namespace = resolveUserNamespace(req, username);
+    const hosts = listHostsByNamespace(namespace, username).map((host) => ({
       id: host.id,
+      namespace: host.namespace,
+      host_key: host.host_key,
       username: host.username,
       fingerprint: host.fingerprint,
       public_key: host.public_key,
+      hostname: host.hostname,
       label: host.label,
       local_endpoint: host.local_endpoint,
       capabilities: (() => {
@@ -278,9 +373,11 @@ export function createSessionRouter() {
       return res.status(400).json(createErrorEnvelope(target, { error: "INVALID_HISTORY_PAYLOAD" }));
     }
 
-    const memories = listHostMemoryHistory(username, fingerprint, limit).map((m) => ({
+    const namespace = resolveUserNamespace(req, username);
+    const memories = listHostMemoryHistory(namespace, username, fingerprint, limit).map((m) => ({
       id: m.id,
       namespace: m.namespace,
+      host_key: m.host_key,
       username: m.username,
       fingerprint: m.fingerprint,
       path: m.path,
@@ -311,17 +408,20 @@ export function createSessionRouter() {
     }
 
     const now = Date.now();
-    const namespace = `${username}.cleaker.me`;
+    const namespace = resolveUserNamespace(req, username);
+    const hosts = listHostsByNamespace(namespace, username);
+    const host = hosts.find((entry) => entry.fingerprint === hostFingerprint);
+    const hostKey = host?.host_key || normalizeHostKey(hostFingerprint);
     appendSemanticMemory({
       namespace,
-      path: `${namespace}/hosts/${hostFingerprint}/status`,
+      path: `host.${hostKey}.status`,
       operator: "=",
       data: "revoked",
       timestamp: now,
     });
     appendSemanticMemory({
       namespace,
-      path: `${namespace}/hosts/${hostFingerprint}/last_seen`,
+      path: `host.${hostKey}.last_seen`,
       operator: "=",
       data: now,
       timestamp: now,

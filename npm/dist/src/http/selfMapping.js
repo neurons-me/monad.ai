@@ -3,13 +3,15 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.buildSelfSurfaceEntry = buildSelfSurfaceEntry;
 exports.parseSelectorGroups = parseSelectorGroups;
 exports.loadSelfNodeConfig = loadSelfNodeConfig;
 exports.resolveSelfDispatch = resolveSelfDispatch;
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
+const identity_1 = require("../namespace/identity");
 function normalizeNamespace(input) {
-    return String(input || "").trim().toLowerCase();
+    return (0, identity_1.normalizeNamespaceIdentity)(input);
 }
 function normalizeToken(input) {
     return String(input || "")
@@ -42,6 +44,165 @@ function extractEndpointHost(endpoint) {
     catch {
         return normalizeToken(raw.replace(/^https?:\/\//i, "").split("/")[0].split(":")[0]);
     }
+}
+function extractEndpointParts(endpoint) {
+    const raw = String(endpoint || "").trim();
+    if (!raw) {
+        return {
+            protocol: "http:",
+            hostname: "",
+            port: "",
+            normalized: "",
+        };
+    }
+    try {
+        const parsed = new URL(raw);
+        return {
+            protocol: parsed.protocol || "http:",
+            hostname: normalizeToken(parsed.hostname),
+            port: String(parsed.port || "").trim(),
+            normalized: parsed.toString().replace(/\/+$/, ""),
+        };
+    }
+    catch {
+        const noProto = raw.replace(/^https?:\/\//i, "");
+        const hostPart = noProto.split("/")[0] || "";
+        const hostname = normalizeToken(hostPart.split(":")[0] || "");
+        const port = String(hostPart.split(":")[1] || "").trim();
+        return {
+            protocol: /^https:\/\//i.test(raw) ? "https:" : "http:",
+            hostname,
+            port,
+            normalized: raw.replace(/\/+$/, ""),
+        };
+    }
+}
+function isLoopbackishHost(host) {
+    const normalized = normalizeToken(host);
+    return /^(localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0)$/.test(normalized);
+}
+function isLikelyLocalHost(host) {
+    const normalized = normalizeToken(host);
+    return Boolean(normalized) && (isLoopbackishHost(normalized) || normalized.endsWith(".local"));
+}
+function normalizeSurfaceType(raw) {
+    const value = String(raw || "").trim().toLowerCase();
+    if (value === "desktop" ||
+        value === "mobile" ||
+        value === "server" ||
+        value === "browser-tab" ||
+        value === "node") {
+        return value;
+    }
+    return null;
+}
+function normalizeSurfaceTrust(raw) {
+    const value = String(raw || "").trim().toLowerCase();
+    if (value === "owner" || value === "trusted-peer" || value === "guest") {
+        return value;
+    }
+    return null;
+}
+function inferSurfaceType(host) {
+    const normalized = normalizeToken(host);
+    if (!normalized)
+        return "node";
+    if (/(iphone|ipad|android|pixel|mobile)/.test(normalized))
+        return "mobile";
+    if (/(tab|browser)/.test(normalized))
+        return "browser-tab";
+    if (/(macbook|imac|desktop|laptop|notebook|pc|workstation|\.local$)/.test(normalized)) {
+        return "desktop";
+    }
+    if (isLoopbackishHost(normalized))
+        return "desktop";
+    return "server";
+}
+function inferSurfaceTrust(host, endpointHost) {
+    return isLikelyLocalHost(host) || isLikelyLocalHost(endpointHost) ? "owner" : "trusted-peer";
+}
+function toNumberOrNull(input) {
+    if (typeof input === "number" && Number.isFinite(input))
+        return input;
+    if (typeof input === "string" && input.trim()) {
+        const parsed = Number(input);
+        if (Number.isFinite(parsed))
+            return parsed;
+    }
+    return null;
+}
+function normalizeSurfaceCapacity(input) {
+    const raw = input && typeof input === "object" ? input : {};
+    return {
+        cpuCores: toNumberOrNull(raw.cpuCores),
+        ramGb: toNumberOrNull(raw.ramGb),
+        storageGb: toNumberOrNull(raw.storageGb),
+        bandwidthMbps: toNumberOrNull(raw.bandwidthMbps),
+    };
+}
+function inferResources(type, host, endpointHost, configured) {
+    const resources = new Set(configured.map((value) => normalizeToken(value)).filter(Boolean));
+    resources.add("public_ingress");
+    resources.add("keychain");
+    if (type === "desktop") {
+        resources.add("filesystem");
+        resources.add("gpu");
+        resources.add("camera");
+    }
+    else if (type === "mobile") {
+        resources.add("camera");
+    }
+    else if (type === "server") {
+        resources.add("filesystem");
+    }
+    if (isLikelyLocalHost(host) || isLikelyLocalHost(endpointHost)) {
+        resources.add("local_lan");
+    }
+    return Array.from(resources);
+}
+function resolveSurfaceRootName(identity, fallbackHost) {
+    const parsed = (0, identity_1.parseNamespaceIdentityParts)(identity);
+    const host = normalizeToken(parsed.host);
+    if (host && host !== "unknown")
+        return host;
+    return normalizeToken(fallbackHost);
+}
+function buildSelfSurfaceEntry(input) {
+    const now = typeof input.now === "number" ? input.now : Date.now();
+    const originParts = extractEndpointParts(input.origin);
+    const endpointParts = extractEndpointParts(input.self?.endpoint || input.origin);
+    const hostId = normalizeToken(input.self?.hostname) ||
+        endpointParts.hostname ||
+        originParts.hostname ||
+        normalizeToken(input.fallbackHost) ||
+        "unknown-host";
+    const endpointHost = endpointParts.hostname || originParts.hostname || hostId;
+    const namespaceHost = isLoopbackishHost(endpointHost) && hostId
+        ? hostId
+        : endpointHost || hostId;
+    const protocol = endpointParts.protocol || originParts.protocol || "http:";
+    const port = endpointParts.port || originParts.port;
+    const namespace = `${protocol}//${namespaceHost}${port ? `:${port}` : ""}`;
+    const endpoint = endpointParts.normalized || originParts.normalized || input.origin.trim();
+    const type = normalizeSurfaceType(input.self?.type) || inferSurfaceType(hostId);
+    const trust = normalizeSurfaceTrust(input.self?.trust) || inferSurfaceTrust(hostId, endpointHost);
+    const rootName = resolveSurfaceRootName(input.self?.identity || input.requestNamespace, namespaceHost || hostId);
+    return {
+        hostId,
+        type,
+        trust,
+        resources: inferResources(type, hostId, endpointHost, input.self?.resources || []),
+        capacity: normalizeSurfaceCapacity(input.self?.capacity),
+        status: {
+            availability: "online",
+            latencyMs: null,
+            syncState: "current",
+            lastSeen: now,
+        },
+        namespace,
+        endpoint,
+        rootName,
+    };
 }
 function parseSelectorGroups(selectorRaw) {
     const raw = String(selectorRaw || "").trim();
@@ -106,12 +267,25 @@ function loadSelfNodeConfig(input) {
         normalizeToken(hostname),
         extractEndpointHost(endpoint),
     ]);
+    const type = normalizeSurfaceType(input.env.MONAD_SELF_TYPE) ||
+        normalizeSurfaceType(fileConfig.type);
+    const trust = normalizeSurfaceTrust(input.env.MONAD_SELF_TRUST) ||
+        normalizeSurfaceTrust(fileConfig.trust);
+    const resources = uniq([
+        ...toArray(fileConfig.resources),
+        ...toArray(input.env.MONAD_SELF_RESOURCES),
+    ]);
+    const capacity = normalizeSurfaceCapacity(fileConfig.capacity);
     return {
         identity,
         tags,
         endpoint,
         hostname,
         configPath,
+        type: type || undefined,
+        trust: trust || undefined,
+        resources,
+        capacity,
     };
 }
 function resolveSelfDispatch(baseInput, selectorRawInput, self) {
