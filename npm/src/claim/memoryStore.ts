@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import { db } from "../Blockchain/db";
+import { normalizeNamespaceRootName } from "../namespace/identity";
 
 export interface SemanticMemoryRow {
   id: number;
@@ -564,6 +565,47 @@ export function listSemanticMemoriesByNamespace(
     signature: row.signature,
     timestamp: row.timestamp,
   }));
+}
+
+export function listSemanticMemoriesByRootNamespace(
+  rootNamespaceInput: string,
+  options: { limit?: number } = {},
+): SemanticMemoryRow[] {
+  const rootNamespace = normalizeNamespaceRootName(rootNamespaceInput);
+  if (!rootNamespace) return [];
+
+  const limit = Math.max(1, Math.min(5000, Number(options.limit || 500)));
+  const rows = db.prepare(`
+    SELECT id, namespace, path, operator, data, hash, prevHash, signature, timestamp
+    FROM semantic_memories
+    ORDER BY id DESC
+    LIMIT ?
+  `).all(limit * 10) as Array<{
+    id: number;
+    namespace: string;
+    path: string;
+    operator: string | null;
+    data: string;
+    hash: string;
+    prevHash: string;
+    signature: string | null;
+    timestamp: number;
+  }>;
+
+  return rows
+    .map((row) => ({
+      id: row.id,
+      namespace: row.namespace,
+      path: row.path,
+      operator: row.operator,
+      data: parseJsonSafe(row.data),
+      hash: row.hash,
+      prevHash: row.prevHash,
+      signature: row.signature,
+      timestamp: row.timestamp,
+    }))
+    .filter((row) => normalizeNamespaceRootName(row.namespace) === rootNamespace)
+    .slice(0, limit);
 }
 
 export function rebuildAuthorizedHostsProjection(usernameInput?: string): number {

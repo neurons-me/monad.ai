@@ -1,13 +1,25 @@
 "use strict";
+var __importDefault = (this && this.__importDefault) || function (mod) {
+    return (mod && mod.__esModule) ? mod : { "default": mod };
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.normalizeNamespaceIdentity = normalizeNamespaceIdentity;
 exports.normalizeNamespaceConstant = normalizeNamespaceConstant;
+exports.normalizeNamespaceRootName = normalizeNamespaceRootName;
 exports.isProjectableNamespaceRoot = isProjectableNamespaceRoot;
 exports.composeProjectedNamespace = composeProjectedNamespace;
 exports.parseNamespaceIdentityParts = parseNamespaceIdentityParts;
+const os_1 = __importDefault(require("os"));
 const cleaker_1 = require("cleaker");
 function normalizeRawNamespace(input) {
     return String(input || "").trim().toLowerCase();
+}
+function stripPort(raw) {
+    return String(raw || "").trim().toLowerCase().replace(/:\d+$/i, "");
+}
+function isLoopbackishHost(raw) {
+    const host = stripPort(raw);
+    return /^(localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0)$/.test(host);
 }
 function parseLegacyUserNamespace(raw) {
     const match = String(raw || "").trim().toLowerCase().match(/^([^/\[]+)\/users\/([^/\[]+)$/i);
@@ -31,15 +43,51 @@ function tryParseNamespace(raw) {
         return null;
     }
 }
+function resolveLocalNamespaceRoot() {
+    const configured = normalizeRawNamespace(process.env.MONAD_SELF_IDENTITY || "");
+    if (configured) {
+        const parsed = tryParseNamespace(configured);
+        const constant = stripPort(parsed?.constant || configured);
+        if (constant)
+            return constant;
+    }
+    return stripPort(os_1.default.hostname()) || "localhost";
+}
+function canonicalizeNamespaceConstant(input) {
+    const constant = stripPort(String(input || ""));
+    if (!constant)
+        return "";
+    if (isLoopbackishHost(constant)) {
+        return resolveLocalNamespaceRoot();
+    }
+    return constant;
+}
+function composeIdentityNamespace(prefix, constant) {
+    const normalizedPrefix = String(prefix || "").trim().toLowerCase();
+    const normalizedConstant = canonicalizeNamespaceConstant(constant);
+    if (!normalizedConstant)
+        return normalizedPrefix;
+    if (!normalizedPrefix)
+        return normalizedConstant;
+    try {
+        return (0, cleaker_1.composeNamespace)(normalizedPrefix, normalizedConstant);
+    }
+    catch {
+        return `${normalizedPrefix}.${normalizedConstant}`;
+    }
+}
 function normalizeNamespaceIdentity(input) {
     const raw = normalizeRawNamespace(input);
     if (!raw)
         return "";
     const legacy = parseLegacyUserNamespace(raw);
     if (legacy)
-        return legacy.namespace;
+        return composeIdentityNamespace(legacy.username, legacy.host);
     const parsed = tryParseNamespace(raw);
-    return parsed?.fqdn || raw;
+    if (parsed) {
+        return composeIdentityNamespace(parsed.prefix || null, parsed.constant || raw);
+    }
+    return canonicalizeNamespaceConstant(raw);
 }
 function normalizeNamespaceConstant(input) {
     const raw = normalizeRawNamespace(input);
@@ -47,9 +95,12 @@ function normalizeNamespaceConstant(input) {
         return "";
     const legacy = parseLegacyUserNamespace(raw);
     if (legacy)
-        return legacy.host;
+        return canonicalizeNamespaceConstant(legacy.host);
     const parsed = tryParseNamespace(raw);
-    return parsed?.constant || raw;
+    return canonicalizeNamespaceConstant(parsed?.constant || raw);
+}
+function normalizeNamespaceRootName(input) {
+    return normalizeNamespaceConstant(input);
 }
 function isProjectableNamespaceRoot(input) {
     const raw = normalizeNamespaceIdentity(input);

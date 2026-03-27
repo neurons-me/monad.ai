@@ -250,12 +250,15 @@ export function buildSelfSurfaceEntry(input: {
   const now = typeof input.now === "number" ? input.now : Date.now();
   const originParts = extractEndpointParts(input.origin);
   const endpointParts = extractEndpointParts(input.self?.endpoint || input.origin);
+  const fallbackHostId = normalizeToken(input.self?.hostname) || normalizeToken(input.fallbackHost);
   const hostId =
-    normalizeToken(input.self?.hostname) ||
-    endpointParts.hostname ||
-    originParts.hostname ||
-    normalizeToken(input.fallbackHost) ||
-    "unknown-host";
+    fallbackHostId && isLoopbackishHost(endpointParts.hostname || originParts.hostname)
+      ? fallbackHostId
+      : normalizeToken(input.self?.hostname) ||
+        endpointParts.hostname ||
+        originParts.hostname ||
+        fallbackHostId ||
+        "unknown-host";
   const endpointHost = endpointParts.hostname || originParts.hostname || hostId;
   const namespaceHost =
     isLoopbackishHost(endpointHost) && hostId

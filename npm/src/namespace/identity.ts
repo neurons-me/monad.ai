@@ -1,3 +1,4 @@
+import os from "os";
 import { composeNamespace, parseNamespaceExpression } from "cleaker";
 
 export interface NamespaceIdentityParts {
@@ -8,6 +9,15 @@ export interface NamespaceIdentityParts {
 
 function normalizeRawNamespace(input: unknown): string {
   return String(input || "").trim().toLowerCase();
+}
+
+function stripPort(raw: string): string {
+  return String(raw || "").trim().toLowerCase().replace(/:\d+$/i, "");
+}
+
+function isLoopbackishHost(raw: string): boolean {
+  const host = stripPort(raw);
+  return /^(localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0)$/.test(host);
 }
 
 function parseLegacyUserNamespace(raw: string): { host: string; username: string; namespace: string } | null {
@@ -33,15 +43,52 @@ function tryParseNamespace(raw: string) {
   }
 }
 
+function resolveLocalNamespaceRoot(): string {
+  const configured = normalizeRawNamespace(process.env.MONAD_SELF_IDENTITY || "");
+  if (configured) {
+    const parsed = tryParseNamespace(configured);
+    const constant = stripPort(parsed?.constant || configured);
+    if (constant) return constant;
+  }
+
+  return stripPort(os.hostname()) || "localhost";
+}
+
+function canonicalizeNamespaceConstant(input: unknown): string {
+  const constant = stripPort(String(input || ""));
+  if (!constant) return "";
+  if (isLoopbackishHost(constant)) {
+    return resolveLocalNamespaceRoot();
+  }
+  return constant;
+}
+
+function composeIdentityNamespace(prefix: string | null, constant: string): string {
+  const normalizedPrefix = String(prefix || "").trim().toLowerCase();
+  const normalizedConstant = canonicalizeNamespaceConstant(constant);
+  if (!normalizedConstant) return normalizedPrefix;
+  if (!normalizedPrefix) return normalizedConstant;
+
+  try {
+    return composeNamespace(normalizedPrefix, normalizedConstant);
+  } catch {
+    return `${normalizedPrefix}.${normalizedConstant}`;
+  }
+}
+
 export function normalizeNamespaceIdentity(input: unknown): string {
   const raw = normalizeRawNamespace(input);
   if (!raw) return "";
 
   const legacy = parseLegacyUserNamespace(raw);
-  if (legacy) return legacy.namespace;
+  if (legacy) return composeIdentityNamespace(legacy.username, legacy.host);
 
   const parsed = tryParseNamespace(raw);
-  return parsed?.fqdn || raw;
+  if (parsed) {
+    return composeIdentityNamespace(parsed.prefix || null, parsed.constant || raw);
+  }
+
+  return canonicalizeNamespaceConstant(raw);
 }
 
 export function normalizeNamespaceConstant(input: unknown): string {
@@ -49,10 +96,14 @@ export function normalizeNamespaceConstant(input: unknown): string {
   if (!raw) return "";
 
   const legacy = parseLegacyUserNamespace(raw);
-  if (legacy) return legacy.host;
+  if (legacy) return canonicalizeNamespaceConstant(legacy.host);
 
   const parsed = tryParseNamespace(raw);
-  return parsed?.constant || raw;
+  return canonicalizeNamespaceConstant(parsed?.constant || raw);
+}
+
+export function normalizeNamespaceRootName(input: unknown): string {
+  return normalizeNamespaceConstant(input);
 }
 
 export function isProjectableNamespaceRoot(input: unknown): boolean {

@@ -14,6 +14,7 @@ const records_1 = require("./src/claim/records");
 const replay_1 = require("./src/claim/replay");
 const records_2 = require("./src/claim/records");
 const replay_2 = require("./src/claim/replay");
+const memoryStore_1 = require("./src/claim/memoryStore");
 const namespace_1 = require("./src/http/namespace");
 const meTarget_1 = require("./src/http/meTarget");
 const envelope_1 = require("./src/http/envelope");
@@ -29,6 +30,7 @@ const PORT = process.env.PORT || 8161;
 const NODE_HOSTNAME = os_1.default.hostname();
 const NODE_DISPLAY_NAME = `${NODE_HOSTNAME}:${PORT}`;
 const FETCH_PROXY_TIMEOUT_MS = Number(process.env.MONAD_FETCH_TIMEOUT_MS || 15000);
+const LOCAL_NAMESPACE_ROOT = (0, identity_1.normalizeNamespaceIdentity)("localhost");
 const SELF_NODE_CONFIG = (0, selfMapping_1.loadSelfNodeConfig)({
     cwd: process.cwd(),
     env: process.env,
@@ -39,6 +41,10 @@ const app = (0, express_1.default)();
 app.set("trust proxy", true);
 app.use((0, cors_1.default)());
 app.use(express_1.default.json());
+const rebuiltProjectedClaims = (0, records_1.rebuildProjectedNamespaceClaims)();
+if (rebuiltProjectedClaims > 0) {
+    console.log(`↺ Rebuilt ${rebuiltProjectedClaims} projected user pointers into root namespaces`);
+}
 const RESERVED_SHORT_NAMESPACES = new Set(["self", "kernel", "local"]);
 function extractNamespaceSelector(namespace) {
     const raw = String(namespace || "").trim();
@@ -260,7 +266,8 @@ app.use("/gui", express_1.default.static(shell_1.GUI_PKG_DIST_DIR));
 app.get("/__bootstrap", (req, res) => {
     const namespace = (0, namespace_1.resolveNamespace)(req);
     const host = (0, namespace_1.resolveTransportHost)(req);
-    const origin = `${req.protocol}://${host}`;
+    const hostHeader = Array.isArray(req.headers.host) ? req.headers.host[0] : req.headers.host || host;
+    const origin = `${req.protocol}://${String(hostHeader || host).trim()}`;
     const target = (0, meTarget_1.normalizeHttpRequestToMeTarget)(req);
     const surfaceEntry = (0, selfMapping_1.buildSelfSurfaceEntry)({
         self: SELF_NODE_CONFIG,
@@ -753,8 +760,9 @@ app.get("/", async (req, res) => {
     const lens = (0, namespace_1.formatObserverRelationLabel)(target.relation);
     const limit = Math.max(1, Math.min(5000, Number(req.query?.limit ?? 5000)));
     const identityHash = String(req.query?.identityHash || "").trim();
+    const rootNamespace = (0, namespace_1.resolveNamespaceProjectionRoot)(chainNs) || chainNs;
     const all = await (0, blockchain_1.getAllBlocks)();
-    const users = await (0, users_1.getAllUsers)();
+    const users = await (0, users_1.getUsersForRootNamespace)(rootNamespace);
     let blocks = (0, namespace_1.filterBlocksByNamespace)(all, chainNs);
     if (identityHash) {
         blocks = blocks.filter((b) => String(b?.identityHash || "") === identityHash);
@@ -766,6 +774,7 @@ app.get("/", async (req, res) => {
         .slice(0, limit);
     return res.json((0, envelope_1.createEnvelope)(target, {
         namespace: chainNs,
+        rootNamespace,
         lens,
         users,
         blocks,
@@ -795,6 +804,21 @@ app.get("/blocks", async (req, res) => {
         lens,
         blocks,
         count: blocks.length,
+    }));
+});
+app.get("/blockchain", async (req, res) => {
+    const chainNs = (0, namespace_1.resolveNamespace)(req);
+    const rootNamespace = (0, namespace_1.resolveNamespaceProjectionRoot)(chainNs) || chainNs;
+    const target = (0, meTarget_1.normalizeHttpRequestToMeTarget)(req);
+    const lens = (0, namespace_1.formatObserverRelationLabel)(target.relation);
+    const limit = Math.max(1, Math.min(5000, Number(req.query?.limit ?? 500)));
+    const memories = (0, memoryStore_1.listSemanticMemoriesByRootNamespace)(rootNamespace, { limit });
+    return res.json((0, envelope_1.createEnvelope)(target, {
+        namespace: chainNs,
+        rootNamespace,
+        lens,
+        memories,
+        count: memories.length,
     }));
 });
 // --- Convenience: allow GET /@... to behave like GET / but with path-based namespace addressing.
@@ -899,9 +923,10 @@ app.listen(PORT, () => {
     console.log("  - Examples:");
     console.log("    • cleaker.me                  -> cleaker.me");
     console.log("    • username.cleaker.me         -> username.cleaker.me");
-    console.log("    • username.localhost          -> username.localhost");
+    console.log(`    • localhost (alias)           -> ${LOCAL_NAMESPACE_ROOT}`);
+    console.log(`    • username.localhost          -> username.${LOCAL_NAMESPACE_ROOT} (local alias projection)`);
     console.log("    • cleaker.me/@username        -> username.cleaker.me (path projection)");
-    console.log("    • localhost/@username         -> username.localhost (path projection)");
+    console.log(`    • localhost/@username         -> username.${LOCAL_NAMESPACE_ROOT} (local alias projection)`);
     console.log("    • cleaker.me/@a+b             -> cleaker.me (relation stays semantic, no DNS projection)");
     console.log("    • cleaker.me/@a/@b            -> a.cleaker.me (target projects, relation stays semantic)");
     console.log("    • ana.cleaker.me/profile?as=bella -> target=ana.cleaker.me, observer=bella.cleaker.me");

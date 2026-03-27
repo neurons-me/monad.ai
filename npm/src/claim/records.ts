@@ -2,8 +2,9 @@ import crypto from "crypto";
 import { db } from "../Blockchain/db";
 import { decryptNoise, deriveIdentityHash, deriveUnlockKey, encryptNoise } from "./derive";
 import { buildPersistentClaimBundle, writePersistentClaimBundle } from "./manager";
-import { normalizeNamespaceIdentity, parseNamespaceIdentityParts } from "../namespace/identity";
+import { normalizeNamespaceIdentity, normalizeNamespaceRootName, parseNamespaceIdentityParts } from "../namespace/identity";
 import { appendSemanticMemory } from "./memoryStore";
+import type { SemanticMemoryRow } from "./memoryStore";
 import type {
   ClaimNamespaceResult,
   ClaimRecord,
@@ -19,7 +20,7 @@ function normalizeNamespace(raw: string) {
 
 function materializeProjectedNamespaceClaim(namespace: string, timestamp: number) {
   const identity = parseNamespaceIdentityParts(namespace);
-  const hostNamespace = String(identity.host || "").trim().toLowerCase();
+  const hostNamespace = normalizeNamespaceRootName(identity.host);
   const username = String(identity.username || "").trim().toLowerCase();
   const projectedNamespace = normalizeNamespace(namespace);
 
@@ -32,6 +33,70 @@ function materializeProjectedNamespaceClaim(namespace: string, timestamp: number
     data: { __ptr: projectedNamespace },
     timestamp,
   });
+}
+
+function listProjectedNamespacePointers(path: string): SemanticMemoryRow[] {
+  return db
+    .prepare(
+      `
+      SELECT id, namespace, path, operator, data, hash, prevHash, signature, timestamp
+      FROM semantic_memories
+      WHERE path = ?
+      ORDER BY id ASC
+    `,
+    )
+    .all(path) as SemanticMemoryRow[];
+}
+
+function hasProjectedNamespacePointer(rootNamespace: string, username: string, projectedNamespace: string): boolean {
+  const path = `users.${username}`;
+  const pointers = listProjectedNamespacePointers(path);
+  return pointers.some((pointer) => {
+    const pointerRoot = normalizeNamespaceRootName(pointer.namespace);
+    if (pointerRoot !== rootNamespace) return false;
+
+    try {
+      const payload = pointer.data as { __ptr?: string } | null;
+      return String(payload?.__ptr || "").trim().toLowerCase() === projectedNamespace;
+    } catch {
+      return false;
+    }
+  });
+}
+
+export function rebuildProjectedNamespaceClaims(): number {
+  const claims = db
+    .prepare(
+      `
+      SELECT namespace, createdAt
+      FROM claims
+      ORDER BY createdAt ASC
+    `,
+    )
+    .all() as Array<{ namespace: string; createdAt: number }>;
+
+  let inserted = 0;
+
+  for (const claim of claims) {
+    const projectedNamespace = normalizeNamespace(claim.namespace);
+    const identity = parseNamespaceIdentityParts(projectedNamespace);
+    const rootNamespace = normalizeNamespaceRootName(identity.host);
+    const username = String(identity.username || "").trim().toLowerCase();
+
+    if (!rootNamespace || !username || !projectedNamespace) continue;
+    if (hasProjectedNamespacePointer(rootNamespace, username, projectedNamespace)) continue;
+
+    appendSemanticMemory({
+      namespace: rootNamespace,
+      path: `users.${username}`,
+      operator: "__",
+      data: { __ptr: projectedNamespace },
+      timestamp: Number(claim.createdAt || Date.now()),
+    });
+    inserted += 1;
+  }
+
+  return inserted;
 }
 
 export function getClaim(namespace: string): ClaimRecord | undefined {

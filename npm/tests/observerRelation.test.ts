@@ -8,6 +8,7 @@ import {
 } from "../src/http/namespace";
 import {
   normalizeNamespaceIdentity,
+  normalizeNamespaceRootName,
   parseNamespaceIdentityParts,
 } from "../src/namespace/identity";
 
@@ -30,6 +31,8 @@ function makeRequest(input: {
 }
 
 describe("observer relation routing", () => {
+  const localRoot = normalizeNamespaceRootName("localhost");
+
   it("keeps the target namespace atomic and projects ?as onto the observer namespace", () => {
     const req = makeRequest({
       host: "ana.cleaker.me",
@@ -63,7 +66,7 @@ describe("observer relation routing", () => {
       query: { as: "@bella" },
     });
 
-    expect(resolveNamespace(req)).toBe("ana.localhost");
+    expect(resolveNamespace(req)).toBe(`ana.${localRoot}`);
 
     const relation = resolveObserverRelation(req);
     expect(relation).toEqual({
@@ -71,22 +74,22 @@ describe("observer relation routing", () => {
       mode: "observer",
       value: "@bella",
       observer: "bella",
-      namespace: "bella.localhost",
+      namespace: `bella.${localRoot}`,
     });
 
     const target = normalizeHttpRequestToMeTarget(req);
-    expect(target.namespace).toBe("ana.localhost");
+    expect(target.namespace).toBe(`ana.${localRoot}`);
     expect(target.path).toBe("profile");
-    expect(target.nrp).toBe("me://ana.localhost:read/profile?as=bella.localhost");
+    expect(target.nrp).toBe(`me://ana.${localRoot}:read/profile?as=bella.${localRoot}`);
   });
 
   it("uses the cleaker namespace parser for localhost-derived identities", () => {
-    expect(normalizeNamespaceIdentity("ana.localhost")).toBe("ana.localhost");
-    expect(resolveNamespaceProjectionRoot("ana.localhost")).toBe("localhost");
+    expect(normalizeNamespaceIdentity("ana.localhost")).toBe(`ana.${localRoot}`);
+    expect(resolveNamespaceProjectionRoot(`ana.${localRoot}`)).toBe(localRoot);
     expect(parseNamespaceIdentityParts("ana.localhost")).toEqual({
-      host: "localhost",
+      host: localRoot,
       username: "ana",
-      effective: "@ana.localhost",
+      effective: `@ana.${localRoot}`,
     });
   });
 

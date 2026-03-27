@@ -379,3 +379,22 @@ export function verifyPersistentClaim(namespace: string) {
     return false;
   }
 }
+
+export function deletePersistentClaim(namespace: string) {
+  const claimPath = getPersistentClaimPath(namespace);
+  const privateKeyPath = getPersistentClaimPrivateKeyPath(namespace);
+
+  try {
+    if (fs.existsSync(claimPath)) {
+      fs.rmSync(claimPath, { force: true });
+    }
+  } catch {
+  }
+
+  try {
+    if (fs.existsSync(privateKeyPath)) {
+      fs.rmSync(privateKeyPath, { force: true });
+    }
+  } catch {
+  }
+}

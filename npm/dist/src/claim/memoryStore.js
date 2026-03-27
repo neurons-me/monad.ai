@@ -7,6 +7,7 @@ exports.createSessionNonce = createSessionNonce;
 exports.consumeSessionNonce = consumeSessionNonce;
 exports.appendSemanticMemory = appendSemanticMemory;
 exports.listSemanticMemoriesByNamespace = listSemanticMemoriesByNamespace;
+exports.listSemanticMemoriesByRootNamespace = listSemanticMemoriesByRootNamespace;
 exports.rebuildAuthorizedHostsProjection = rebuildAuthorizedHostsProjection;
 exports.listHostsByUsername = listHostsByUsername;
 exports.listHostsByNamespace = listHostsByNamespace;
@@ -14,6 +15,7 @@ exports.getHostStatus = getHostStatus;
 exports.listHostMemoryHistory = listHostMemoryHistory;
 const crypto_1 = __importDefault(require("crypto"));
 const db_1 = require("../Blockchain/db");
+const identity_1 = require("../namespace/identity");
 db_1.db.exec(`
 CREATE TABLE IF NOT EXISTS semantic_memories (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -440,6 +442,32 @@ function listSemanticMemoriesByNamespace(namespaceInput, options = {}) {
         signature: row.signature,
         timestamp: row.timestamp,
     }));
+}
+function listSemanticMemoriesByRootNamespace(rootNamespaceInput, options = {}) {
+    const rootNamespace = (0, identity_1.normalizeNamespaceRootName)(rootNamespaceInput);
+    if (!rootNamespace)
+        return [];
+    const limit = Math.max(1, Math.min(5000, Number(options.limit || 500)));
+    const rows = db_1.db.prepare(`
+    SELECT id, namespace, path, operator, data, hash, prevHash, signature, timestamp
+    FROM semantic_memories
+    ORDER BY id DESC
+    LIMIT ?
+  `).all(limit * 10);
+    return rows
+        .map((row) => ({
+        id: row.id,
+        namespace: row.namespace,
+        path: row.path,
+        operator: row.operator,
+        data: parseJsonSafe(row.data),
+        hash: row.hash,
+        prevHash: row.prevHash,
+        signature: row.signature,
+        timestamp: row.timestamp,
+    }))
+        .filter((row) => (0, identity_1.normalizeNamespaceRootName)(row.namespace) === rootNamespace)
+        .slice(0, limit);
 }
 function rebuildAuthorizedHostsProjection(usernameInput) {
     const username = usernameInput ? normalizeUsername(usernameInput) : "";

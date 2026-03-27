@@ -3,6 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.rebuildProjectedNamespaceClaims = rebuildProjectedNamespaceClaims;
 exports.getClaim = getClaim;
 exports.claimNamespace = claimNamespace;
 exports.openNamespace = openNamespace;
@@ -17,7 +18,7 @@ function normalizeNamespace(raw) {
 }
 function materializeProjectedNamespaceClaim(namespace, timestamp) {
     const identity = (0, identity_1.parseNamespaceIdentityParts)(namespace);
-    const hostNamespace = String(identity.host || "").trim().toLowerCase();
+    const hostNamespace = (0, identity_1.normalizeNamespaceRootName)(identity.host);
     const username = String(identity.username || "").trim().toLowerCase();
     const projectedNamespace = normalizeNamespace(namespace);
     if (!hostNamespace || !username || !projectedNamespace)
@@ -29,6 +30,61 @@ function materializeProjectedNamespaceClaim(namespace, timestamp) {
         data: { __ptr: projectedNamespace },
         timestamp,
     });
+}
+function listProjectedNamespacePointers(path) {
+    return db_1.db
+        .prepare(`
+      SELECT id, namespace, path, operator, data, hash, prevHash, signature, timestamp
+      FROM semantic_memories
+      WHERE path = ?
+      ORDER BY id ASC
+    `)
+        .all(path);
+}
+function hasProjectedNamespacePointer(rootNamespace, username, projectedNamespace) {
+    const path = `users.${username}`;
+    const pointers = listProjectedNamespacePointers(path);
+    return pointers.some((pointer) => {
+        const pointerRoot = (0, identity_1.normalizeNamespaceRootName)(pointer.namespace);
+        if (pointerRoot !== rootNamespace)
+            return false;
+        try {
+            const payload = pointer.data;
+            return String(payload?.__ptr || "").trim().toLowerCase() === projectedNamespace;
+        }
+        catch {
+            return false;
+        }
+    });
+}
+function rebuildProjectedNamespaceClaims() {
+    const claims = db_1.db
+        .prepare(`
+      SELECT namespace, createdAt
+      FROM claims
+      ORDER BY createdAt ASC
+    `)
+        .all();
+    let inserted = 0;
+    for (const claim of claims) {
+        const projectedNamespace = normalizeNamespace(claim.namespace);
+        const identity = (0, identity_1.parseNamespaceIdentityParts)(projectedNamespace);
+        const rootNamespace = (0, identity_1.normalizeNamespaceRootName)(identity.host);
+        const username = String(identity.username || "").trim().toLowerCase();
+        if (!rootNamespace || !username || !projectedNamespace)
+            continue;
+        if (hasProjectedNamespacePointer(rootNamespace, username, projectedNamespace))
+            continue;
+        (0, memoryStore_1.appendSemanticMemory)({
+            namespace: rootNamespace,
+            path: `users.${username}`,
+            operator: "__",
+            data: { __ptr: projectedNamespace },
+            timestamp: Number(claim.createdAt || Date.now()),
+        });
+        inserted += 1;
+    }
+    return inserted;
 }
 function getClaim(namespace) {
     const ns = normalizeNamespace(namespace);

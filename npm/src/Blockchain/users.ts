@@ -3,6 +3,9 @@
 // Users Table Accessors (using shared SQLite db)
 // -------------------------------------------------------------
 import { db } from "./db";
+import {
+  normalizeNamespaceRootName,
+} from "../namespace/identity";
 
 export type UserRow = {
   username: string;
@@ -15,6 +18,21 @@ export type UserRow = {
 export type ClaimUserResult =
   | { ok: true; user: UserRow }
   | { ok: false; error: "USERNAME_TAKEN" | "USERNAME_REQUIRED" | "IDENTITY_HASH_REQUIRED" | "PUBLIC_KEY_REQUIRED" };
+
+type ClaimProjectionRow = {
+  namespace: string;
+  identityHash: string;
+  publicKey: string | null;
+  createdAt: number;
+  updatedAt: number;
+};
+
+type RootUserPointerRow = {
+  namespace: string;
+  path: string;
+  data: string;
+  timestamp: number;
+};
 
 function normalizeUsername(raw: string) {
   const u = String(raw || "").trim().toLowerCase();
@@ -34,6 +52,65 @@ export function getAllUsers(): UserRow[] {
     `
     )
     .all() as UserRow[];
+}
+
+export function getUsersForRootNamespace(rootNamespaceInput: string): UserRow[] {
+  const rootNamespace = normalizeNamespaceRootName(rootNamespaceInput);
+  if (!rootNamespace) return [];
+
+  const pointerRows = db
+    .prepare(
+      `
+      SELECT namespace, path, data, timestamp
+      FROM semantic_memories
+      WHERE path LIKE 'users.%'
+      ORDER BY id ASC
+    `
+    )
+    .all() as RootUserPointerRow[];
+
+  const seen = new Set<string>();
+  const users: UserRow[] = [];
+
+  for (const row of pointerRows) {
+    const hostRoot = normalizeNamespaceRootName(row.namespace);
+    if (!hostRoot || hostRoot !== rootNamespace) continue;
+
+    const match = String(row.path || "").trim().match(/^users\.([a-z0-9_-]+)$/i);
+    const username = String(match?.[1] || "").trim().toLowerCase();
+    if (seen.has(username)) continue;
+    seen.add(username);
+
+    let projectedNamespace = "";
+    try {
+      const parsed = JSON.parse(String(row.data || "{}"));
+      projectedNamespace = String(parsed?.__ptr || "").trim().toLowerCase();
+    } catch {
+      projectedNamespace = "";
+    }
+
+    const claim = projectedNamespace
+      ? (db
+          .prepare(
+            `
+            SELECT namespace, identityHash, publicKey, createdAt, updatedAt
+            FROM claims
+            WHERE namespace = ?
+          `,
+          )
+          .get(projectedNamespace) as ClaimProjectionRow | undefined)
+      : undefined;
+
+    users.push({
+      username,
+      identityHash: String(claim?.identityHash || "").trim(),
+      publicKey: String(claim?.publicKey || "").trim(),
+      createdAt: Number(claim?.createdAt || row.timestamp || 0),
+      updatedAt: Number(claim?.updatedAt || row.timestamp || 0),
+    });
+  }
+
+  return users;
 }
 
 // -------------------------------------------------------------

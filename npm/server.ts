@@ -4,16 +4,18 @@ import os from "os";
 import { createHash } from "crypto";
 import { db, DB_PATH } from "./src/Blockchain/db";
 import { appendBlock, getAllBlocks } from "./src/Blockchain/blockchain";
-import { getAllUsers } from "./src/Blockchain/users";
-import { claimNamespace, openNamespace } from "./src/claim/records";
+import { getUsersForRootNamespace } from "./src/Blockchain/users";
+import { claimNamespace, openNamespace, rebuildProjectedNamespaceClaims } from "./src/claim/records";
 import { getMemoriesForNamespace } from "./src/claim/replay";
 import { getClaim } from "./src/claim/records";
 import { isNamespaceWriteAuthorized, recordMemory } from "./src/claim/replay";
+import { listSemanticMemoriesByRootNamespace } from "./src/claim/memoryStore";
 import {
   filterBlocksByNamespace,
   formatObserverRelationLabel,
   resolveHostNamespace,
   resolveNamespace,
+  resolveNamespaceProjectionRoot,
   resolveObserverRelation,
   resolveTransportHost,
   type ObserverRelation,
@@ -40,6 +42,7 @@ const PORT = process.env.PORT || 8161;
 const NODE_HOSTNAME = os.hostname();
 const NODE_DISPLAY_NAME = `${NODE_HOSTNAME}:${PORT}`;
 const FETCH_PROXY_TIMEOUT_MS = Number(process.env.MONAD_FETCH_TIMEOUT_MS || 15000);
+const LOCAL_NAMESPACE_ROOT = normalizeNamespaceIdentity("localhost");
 const SELF_NODE_CONFIG = loadSelfNodeConfig({
   cwd: process.cwd(),
   env: process.env,
@@ -50,6 +53,11 @@ const app = express();
 app.set("trust proxy", true);
 app.use(cors());
 app.use(express.json());
+
+const rebuiltProjectedClaims = rebuildProjectedNamespaceClaims();
+if (rebuiltProjectedClaims > 0) {
+  console.log(`↺ Rebuilt ${rebuiltProjectedClaims} projected user pointers into root namespaces`);
+}
 
 type BridgeTarget = {
   namespace: string;
@@ -319,7 +327,8 @@ app.use("/gui", express.static(GUI_PKG_DIST_DIR));
 app.get("/__bootstrap", (req, res) => {
   const namespace = resolveNamespace(req);
   const host = resolveTransportHost(req);
-  const origin = `${req.protocol}://${host}`;
+  const hostHeader = Array.isArray(req.headers.host) ? req.headers.host[0] : req.headers.host || host;
+  const origin = `${req.protocol}://${String(hostHeader || host).trim()}`;
   const target = normalizeHttpRequestToMeTarget(req);
   const surfaceEntry = buildSelfSurfaceEntry({
     self: SELF_NODE_CONFIG,
@@ -878,9 +887,10 @@ app.get("/", async (req: express.Request, res: express.Response) => {
   const lens = formatObserverRelationLabel(target.relation);
   const limit = Math.max(1, Math.min(5000, Number((req.query as any)?.limit ?? 5000)));
   const identityHash = String((req.query as any)?.identityHash || "").trim();
+  const rootNamespace = resolveNamespaceProjectionRoot(chainNs) || chainNs;
 
   const all = await getAllBlocks();
-  const users = await getAllUsers();
+  const users = await getUsersForRootNamespace(rootNamespace);
 
   let blocks = filterBlocksByNamespace(all, chainNs);
   if (identityHash) {
@@ -895,6 +905,7 @@ app.get("/", async (req: express.Request, res: express.Response) => {
 
   return res.json(createEnvelope(target, {
     namespace: chainNs,
+    rootNamespace,
     lens,
     users,
     blocks,
@@ -928,6 +939,24 @@ app.get("/blocks", async (req: express.Request, res: express.Response) => {
     lens,
     blocks,
     count: blocks.length,
+  }));
+});
+
+app.get("/blockchain", async (req: express.Request, res: express.Response) => {
+  const chainNs = resolveNamespace(req);
+  const rootNamespace = resolveNamespaceProjectionRoot(chainNs) || chainNs;
+  const target = normalizeHttpRequestToMeTarget(req);
+  const lens = formatObserverRelationLabel(target.relation);
+  const limit = Math.max(1, Math.min(5000, Number((req.query as any)?.limit ?? 500)));
+
+  const memories = listSemanticMemoriesByRootNamespace(rootNamespace, { limit });
+
+  return res.json(createEnvelope(target, {
+    namespace: chainNs,
+    rootNamespace,
+    lens,
+    memories,
+    count: memories.length,
   }));
 });
 
@@ -1044,9 +1073,10 @@ app.listen(PORT, () => {
   console.log("  - Examples:");
   console.log("    • cleaker.me                  -> cleaker.me");
   console.log("    • username.cleaker.me         -> username.cleaker.me");
-  console.log("    • username.localhost          -> username.localhost");
+  console.log(`    • localhost (alias)           -> ${LOCAL_NAMESPACE_ROOT}`);
+  console.log(`    • username.localhost          -> username.${LOCAL_NAMESPACE_ROOT} (local alias projection)`);
   console.log("    • cleaker.me/@username        -> username.cleaker.me (path projection)");
-  console.log("    • localhost/@username         -> username.localhost (path projection)");
+  console.log(`    • localhost/@username         -> username.${LOCAL_NAMESPACE_ROOT} (local alias projection)`);
   console.log("    • cleaker.me/@a+b             -> cleaker.me (relation stays semantic, no DNS projection)");
   console.log("    • cleaker.me/@a/@b            -> a.cleaker.me (target projects, relation stays semantic)");
   console.log("    • ana.cleaker.me/profile?as=bella -> target=ana.cleaker.me, observer=bella.cleaker.me");

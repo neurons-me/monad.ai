@@ -127,6 +127,13 @@ function createClaimsRouter() {
             data: profile.phone,
             timestamp,
         });
+        (0, memoryStore_1.appendSemanticMemory)({
+            namespace: out.record.namespace,
+            path: "auth.claimed_at",
+            operator: "=",
+            data: timestamp,
+            timestamp,
+        });
         return res.status(201).json((0, envelope_1.createEnvelope)(target, {
             namespace: out.record.namespace,
             identityHash: out.record.identityHash,
@@ -159,6 +166,13 @@ function createClaimsRouter() {
         }
         const memories = (0, replay_1.getMemoriesForNamespace)(out.record.namespace);
         const openedAt = Date.now();
+        (0, memoryStore_1.appendSemanticMemory)({
+            namespace: out.record.namespace,
+            path: "session.opened_at",
+            operator: "=",
+            data: openedAt,
+            timestamp: openedAt,
+        });
         const policy = getDefaultReadPolicy(out.record.namespace);
         const identity = parseNamespaceIdentity(out.record.namespace);
         const audit = {

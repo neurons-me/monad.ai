@@ -8,6 +8,7 @@ exports.buildPersistentClaimBundle = buildPersistentClaimBundle;
 exports.writePersistentClaimBundle = writePersistentClaimBundle;
 exports.loadPersistentClaim = loadPersistentClaim;
 exports.verifyPersistentClaim = verifyPersistentClaim;
+exports.deletePersistentClaim = deletePersistentClaim;
 const crypto_1 = __importDefault(require("crypto"));
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
@@ -299,5 +300,23 @@ function verifyPersistentClaim(namespace) {
     }
     catch {
         return false;
+    }
+}
+function deletePersistentClaim(namespace) {
+    const claimPath = getPersistentClaimPath(namespace);
+    const privateKeyPath = getPersistentClaimPrivateKeyPath(namespace);
+    try {
+        if (fs_1.default.existsSync(claimPath)) {
+            fs_1.default.rmSync(claimPath, { force: true });
+        }
+    }
+    catch {
+    }
+    try {
+        if (fs_1.default.existsSync(privateKeyPath)) {
+            fs_1.default.rmSync(privateKeyPath, { force: true });
+        }
+    }
+    catch {
     }
 }

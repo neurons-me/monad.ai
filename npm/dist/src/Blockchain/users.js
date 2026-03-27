@@ -1,6 +1,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getAllUsers = getAllUsers;
+exports.getUsersForRootNamespace = getUsersForRootNamespace;
 exports.getUser = getUser;
 exports.claimUser = claimUser;
 exports.countBlocksForUser = countBlocksForUser;
@@ -9,6 +10,7 @@ exports.countBlocksForUser = countBlocksForUser;
 // Users Table Accessors (using shared SQLite db)
 // -------------------------------------------------------------
 const db_1 = require("./db");
+const identity_1 = require("../namespace/identity");
 function normalizeUsername(raw) {
     const u = String(raw || "").trim().toLowerCase();
     return u;
@@ -24,6 +26,56 @@ function getAllUsers() {
       ORDER BY createdAt ASC
     `)
         .all();
+}
+function getUsersForRootNamespace(rootNamespaceInput) {
+    const rootNamespace = (0, identity_1.normalizeNamespaceRootName)(rootNamespaceInput);
+    if (!rootNamespace)
+        return [];
+    const pointerRows = db_1.db
+        .prepare(`
+      SELECT namespace, path, data, timestamp
+      FROM semantic_memories
+      WHERE path LIKE 'users.%'
+      ORDER BY id ASC
+    `)
+        .all();
+    const seen = new Set();
+    const users = [];
+    for (const row of pointerRows) {
+        const hostRoot = (0, identity_1.normalizeNamespaceRootName)(row.namespace);
+        if (!hostRoot || hostRoot !== rootNamespace)
+            continue;
+        const match = String(row.path || "").trim().match(/^users\.([a-z0-9_-]+)$/i);
+        const username = String(match?.[1] || "").trim().toLowerCase();
+        if (seen.has(username))
+            continue;
+        seen.add(username);
+        let projectedNamespace = "";
+        try {
+            const parsed = JSON.parse(String(row.data || "{}"));
+            projectedNamespace = String(parsed?.__ptr || "").trim().toLowerCase();
+        }
+        catch {
+            projectedNamespace = "";
+        }
+        const claim = projectedNamespace
+            ? db_1.db
+                .prepare(`
+            SELECT namespace, identityHash, publicKey, createdAt, updatedAt
+            FROM claims
+            WHERE namespace = ?
+          `)
+                .get(projectedNamespace)
+            : undefined;
+        users.push({
+            username,
+            identityHash: String(claim?.identityHash || "").trim(),
+            publicKey: String(claim?.publicKey || "").trim(),
+            createdAt: Number(claim?.createdAt || row.timestamp || 0),
+            updatedAt: Number(claim?.updatedAt || row.timestamp || 0),
+        });
+    }
+    return users;
 }
 // -------------------------------------------------------------
 // GET SINGLE USER
