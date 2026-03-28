@@ -2,6 +2,7 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.createPathResolverHandler = createPathResolverHandler;
 const blockchain_1 = require("../Blockchain/blockchain");
+const memoryStore_1 = require("../claim/memoryStore");
 const namespace_1 = require("./namespace");
 const meTarget_1 = require("./meTarget");
 const envelope_1 = require("./envelope");
@@ -45,6 +46,14 @@ function createPathResolverHandler() {
         const dotPath = segments.join(".");
         if (!dotPath) {
             return res.status(404).json((0, envelope_1.createErrorEnvelope)(target, { error: "NOT_FOUND" }));
+        }
+        const semanticResolved = (0, memoryStore_1.readSemanticValueForNamespace)(namespace, dotPath);
+        if (typeof semanticResolved !== "undefined") {
+            return res.json((0, envelope_1.createEnvelope)(target, {
+                namespace,
+                path: dotPath,
+                value: semanticResolved,
+            }));
         }
         const all = await (0, blockchain_1.getAllBlocks)();
         const blocks = all

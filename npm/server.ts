@@ -6,6 +6,7 @@ import { db, DB_PATH } from "./src/Blockchain/db";
 import { appendBlock, getAllBlocks } from "./src/Blockchain/blockchain";
 import { getUsersForRootNamespace } from "./src/Blockchain/users";
 import { claimNamespace, openNamespace, rebuildProjectedNamespaceClaims } from "./src/claim/records";
+import { ensureRootSemanticBootstrap } from "./src/claim/semanticBootstrap";
 import { getMemoriesForNamespace } from "./src/claim/replay";
 import { getClaim } from "./src/claim/records";
 import { isNamespaceWriteAuthorized, recordMemory } from "./src/claim/replay";
@@ -33,6 +34,7 @@ import {
 } from "./src/http/selfMapping";
 import {
   normalizeNamespaceIdentity,
+  normalizeNamespaceRootName,
   parseNamespaceIdentityParts,
 } from "./src/namespace/identity";
 import { parseTarget } from "cleaker";
@@ -57,6 +59,13 @@ app.use(express.json());
 const rebuiltProjectedClaims = rebuildProjectedNamespaceClaims();
 if (rebuiltProjectedClaims > 0) {
   console.log(`↺ Rebuilt ${rebuiltProjectedClaims} projected user pointers into root namespaces`);
+}
+const semanticBootstrapRoot = normalizeNamespaceRootName(
+  SELF_NODE_CONFIG?.identity || LOCAL_NAMESPACE_ROOT,
+);
+const seededSemanticBootstrap = ensureRootSemanticBootstrap(semanticBootstrapRoot);
+if (seededSemanticBootstrap > 0) {
+  console.log(`∷ Seeded ${seededSemanticBootstrap} root semantic memories in ${semanticBootstrapRoot}`);
 }
 
 type BridgeTarget = {

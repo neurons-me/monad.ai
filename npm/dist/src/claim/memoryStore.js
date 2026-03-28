@@ -7,6 +7,8 @@ exports.createSessionNonce = createSessionNonce;
 exports.consumeSessionNonce = consumeSessionNonce;
 exports.appendSemanticMemory = appendSemanticMemory;
 exports.listSemanticMemoriesByNamespace = listSemanticMemoriesByNamespace;
+exports.buildSemanticTreeForNamespace = buildSemanticTreeForNamespace;
+exports.readSemanticValueForNamespace = readSemanticValueForNamespace;
 exports.listSemanticMemoriesByRootNamespace = listSemanticMemoriesByRootNamespace;
 exports.rebuildAuthorizedHostsProjection = rebuildAuthorizedHostsProjection;
 exports.listHostsByUsername = listHostsByUsername;
@@ -16,6 +18,9 @@ exports.listHostMemoryHistory = listHostMemoryHistory;
 const crypto_1 = __importDefault(require("crypto"));
 const db_1 = require("../Blockchain/db");
 const identity_1 = require("../namespace/identity");
+function isPlainObject(value) {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
 db_1.db.exec(`
 CREATE TABLE IF NOT EXISTS semantic_memories (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -442,6 +447,70 @@ function listSemanticMemoriesByNamespace(namespaceInput, options = {}) {
         signature: row.signature,
         timestamp: row.timestamp,
     }));
+}
+function setDeepValue(target, pathInput, value) {
+    const parts = String(pathInput || "").split(".").filter(Boolean);
+    if (parts.length === 0)
+        return;
+    let cursor = target;
+    for (let index = 0; index < parts.length; index += 1) {
+        const key = parts[index];
+        const isLast = index === parts.length - 1;
+        if (isLast) {
+            cursor[key] = value;
+            return;
+        }
+        const current = cursor[key];
+        if (!isPlainObject(current)) {
+            cursor[key] = {};
+        }
+        cursor = cursor[key];
+    }
+}
+function deleteDeepValue(target, pathInput) {
+    const parts = String(pathInput || "").split(".").filter(Boolean);
+    if (parts.length === 0)
+        return;
+    let cursor = target;
+    for (let index = 0; index < parts.length - 1; index += 1) {
+        const key = parts[index];
+        const current = cursor[key];
+        if (!isPlainObject(current)) {
+            return;
+        }
+        cursor = current;
+    }
+    delete cursor[parts[parts.length - 1]];
+}
+function buildSemanticTreeForNamespace(namespaceInput, options = {}) {
+    const memories = listSemanticMemoriesByNamespace(namespaceInput, {
+        ...options,
+        limit: options.limit ?? 10000,
+    });
+    const tree = {};
+    for (const memory of memories) {
+        if (memory.operator === "-") {
+            deleteDeepValue(tree, memory.path);
+            continue;
+        }
+        setDeepValue(tree, memory.path, memory.data);
+    }
+    return tree;
+}
+function readSemanticValueForNamespace(namespaceInput, pathInput) {
+    const tree = buildSemanticTreeForNamespace(namespaceInput);
+    const parts = String(pathInput || "").split(".").filter(Boolean);
+    if (parts.length === 0)
+        return tree;
+    let cursor = tree;
+    for (const part of parts) {
+        if (!isPlainObject(cursor))
+            return undefined;
+        cursor = cursor[part];
+        if (typeof cursor === "undefined")
+            return undefined;
+    }
+    return cursor;
 }
 function listSemanticMemoriesByRootNamespace(rootNamespaceInput, options = {}) {
     const rootNamespace = (0, identity_1.normalizeNamespaceRootName)(rootNamespaceInput);

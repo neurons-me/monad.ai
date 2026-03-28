@@ -11,6 +11,7 @@ const db_1 = require("./src/Blockchain/db");
 const blockchain_1 = require("./src/Blockchain/blockchain");
 const users_1 = require("./src/Blockchain/users");
 const records_1 = require("./src/claim/records");
+const semanticBootstrap_1 = require("./src/claim/semanticBootstrap");
 const replay_1 = require("./src/claim/replay");
 const records_2 = require("./src/claim/records");
 const replay_2 = require("./src/claim/replay");
@@ -44,6 +45,11 @@ app.use(express_1.default.json());
 const rebuiltProjectedClaims = (0, records_1.rebuildProjectedNamespaceClaims)();
 if (rebuiltProjectedClaims > 0) {
     console.log(`↺ Rebuilt ${rebuiltProjectedClaims} projected user pointers into root namespaces`);
+}
+const semanticBootstrapRoot = (0, identity_1.normalizeNamespaceRootName)(SELF_NODE_CONFIG?.identity || LOCAL_NAMESPACE_ROOT);
+const seededSemanticBootstrap = (0, semanticBootstrap_1.ensureRootSemanticBootstrap)(semanticBootstrapRoot);
+if (seededSemanticBootstrap > 0) {
+    console.log(`∷ Seeded ${seededSemanticBootstrap} root semantic memories in ${semanticBootstrapRoot}`);
 }
 const RESERVED_SHORT_NAMESPACES = new Set(["self", "kernel", "local"]);
 function extractNamespaceSelector(namespace) {

@@ -39,6 +39,10 @@ export interface AuthorizedHostRow {
   revoked_at: number | null;
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
 type HostField =
   | "fingerprint"
   | "status"
@@ -565,6 +569,84 @@ export function listSemanticMemoriesByNamespace(
     signature: row.signature,
     timestamp: row.timestamp,
   }));
+}
+
+function setDeepValue(target: Record<string, unknown>, pathInput: string, value: unknown): void {
+  const parts = String(pathInput || "").split(".").filter(Boolean);
+  if (parts.length === 0) return;
+
+  let cursor: Record<string, unknown> = target;
+  for (let index = 0; index < parts.length; index += 1) {
+    const key = parts[index]!;
+    const isLast = index === parts.length - 1;
+
+    if (isLast) {
+      cursor[key] = value;
+      return;
+    }
+
+    const current = cursor[key];
+    if (!isPlainObject(current)) {
+      cursor[key] = {};
+    }
+    cursor = cursor[key] as Record<string, unknown>;
+  }
+}
+
+function deleteDeepValue(target: Record<string, unknown>, pathInput: string): void {
+  const parts = String(pathInput || "").split(".").filter(Boolean);
+  if (parts.length === 0) return;
+
+  let cursor: Record<string, unknown> = target;
+  for (let index = 0; index < parts.length - 1; index += 1) {
+    const key = parts[index]!;
+    const current = cursor[key];
+    if (!isPlainObject(current)) {
+      return;
+    }
+    cursor = current;
+  }
+
+  delete cursor[parts[parts.length - 1]!];
+}
+
+export function buildSemanticTreeForNamespace(
+  namespaceInput: string,
+  options: { prefix?: string; limit?: number } = {},
+): Record<string, unknown> {
+  const memories = listSemanticMemoriesByNamespace(namespaceInput, {
+    ...options,
+    limit: options.limit ?? 10000,
+  });
+
+  const tree: Record<string, unknown> = {};
+  for (const memory of memories) {
+    if (memory.operator === "-") {
+      deleteDeepValue(tree, memory.path);
+      continue;
+    }
+    setDeepValue(tree, memory.path, memory.data);
+  }
+
+  return tree;
+}
+
+export function readSemanticValueForNamespace(
+  namespaceInput: string,
+  pathInput: string,
+): unknown {
+  const tree = buildSemanticTreeForNamespace(namespaceInput);
+  const parts = String(pathInput || "").split(".").filter(Boolean);
+  if (parts.length === 0) return tree;
+
+  let cursor: unknown = tree;
+  for (const part of parts) {
+    if (!isPlainObject(cursor)) return undefined;
+    cursor = cursor[part];
+    if (typeof cursor === "undefined") return undefined;
+  }
+
+  return cursor;
 }
 
 export function listSemanticMemoriesByRootNamespace(
