@@ -4,6 +4,7 @@ exports.ensureRootSemanticBootstrap = ensureRootSemanticBootstrap;
 const db_1 = require("../Blockchain/db");
 const identity_1 = require("../namespace/identity");
 const memoryStore_1 = require("./memoryStore");
+const semanticCatalog_1 = require("./semanticCatalog");
 function stableStringify(value) {
     if (value === null || typeof value !== "object")
         return JSON.stringify(value);
@@ -51,17 +52,8 @@ function ensureRootSemanticBootstrap(rootNamespaceInput) {
     if (!rootNamespace)
         return 0;
     const timestamp = Date.now();
-    const seeds = [
-        { path: "schema.role.group.status", data: "adopted" },
-        { path: "schema.role.group.behavior.type", data: "entity" },
-        { path: "schema.role.group.suggest.contains", data: ["member", "policy", "channel"] },
-        { path: "schema.role.member.status", data: "adopted" },
-        { path: "schema.role.member.behavior.type", data: "collection" },
-        { path: "schema.role.member.behavior.iterator", data: "username" },
-        { path: "schema.role.member.suggest.contains", data: ["identity", "permissions", "joined_at"] },
-    ];
     let inserted = 0;
-    for (const seed of seeds) {
+    for (const seed of semanticCatalog_1.ROOT_SCHEMA_SEEDS) {
         if (ensureSemanticMemory(rootNamespace, seed.path, seed.data, seed.operator || "=", timestamp)) {
             inserted += 1;
         }

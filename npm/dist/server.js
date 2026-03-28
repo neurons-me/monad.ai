@@ -24,6 +24,7 @@ const claims_1 = require("./src/http/claims");
 const session_1 = require("./src/http/session");
 const legacy_1 = require("./src/http/legacy");
 const selfMapping_1 = require("./src/http/selfMapping");
+const surfaceTelemetry_1 = require("./src/http/surfaceTelemetry");
 const identity_1 = require("./src/namespace/identity");
 const cleaker_1 = require("cleaker");
 const shell_1 = require("./src/http/shell");
@@ -281,14 +282,42 @@ app.get("/__bootstrap", (req, res) => {
         fallbackHost: NODE_HOSTNAME,
         requestNamespace: namespace,
     });
+    const telemetry = (0, surfaceTelemetry_1.getSurfaceTelemetrySnapshot)();
     return res.json((0, envelope_1.createEnvelope)(target, {
         host,
         namespace,
         apiOrigin: origin,
         resolverHostName: NODE_HOSTNAME,
         resolverDisplayName: NODE_DISPLAY_NAME,
-        surfaceEntry,
+        surfaceEntry: {
+            ...surfaceEntry,
+            ...telemetry,
+        },
     }));
+});
+app.get("/__surface", (req, res) => {
+    const namespace = (0, namespace_1.resolveNamespace)(req);
+    const host = (0, namespace_1.resolveTransportHost)(req);
+    const hostHeader = Array.isArray(req.headers.host) ? req.headers.host[0] : req.headers.host || host;
+    const origin = `${req.protocol}://${String(hostHeader || host).trim()}`;
+    const target = (0, meTarget_1.normalizeHttpRequestToMeTarget)(req);
+    const surfaceEntry = (0, selfMapping_1.buildSelfSurfaceEntry)({
+        self: SELF_NODE_CONFIG,
+        origin,
+        fallbackHost: NODE_HOSTNAME,
+        requestNamespace: namespace,
+    });
+    return res.json((0, envelope_1.createEnvelope)(target, {
+        host,
+        namespace,
+        surfaceEntry: {
+            ...surfaceEntry,
+            ...(0, surfaceTelemetry_1.getSurfaceTelemetrySnapshot)(),
+        },
+    }));
+});
+app.get("/__surface/events", (req, res) => {
+    (0, surfaceTelemetry_1.attachSurfaceStreamClient)(req, res);
 });
 app.get("/__fetch", async (req, res) => {
     const target = (0, meTarget_1.normalizeHttpRequestToMeTarget)(req);
@@ -613,10 +642,28 @@ app.use((req, _res, next) => {
     const forwardedHost = (0, namespace_1.resolveHostNamespace)(req);
     const target = (0, meTarget_1.normalizeHttpRequestToMeTarget)(req);
     const lens = (0, namespace_1.formatObserverRelationLabel)(target.relation);
+    const startedAt = Date.now();
     const forwardedSuffix = forwardedHost && forwardedHost !== transportHost
         ? ` xf=${forwardedHost}`
         : "";
     console.log(`→ ${req.method} ${req.url} host=${transportHost || "unknown"} ns=${target.namespace} lens=${lens} op=${target.operation} nrp=${target.nrp}${forwardedSuffix}`);
+    _res.on("finish", () => {
+        if (req.path === "/__surface/events")
+            return;
+        (0, surfaceTelemetry_1.recordSurfaceRequest)({
+            method: req.method,
+            url: req.url,
+            status: _res.statusCode,
+            durationMs: Date.now() - startedAt,
+            host: transportHost || "unknown",
+            namespace: target.namespace,
+            operation: target.operation,
+            nrp: target.nrp,
+            lens,
+            forwardedHost: forwardedHost && forwardedHost !== transportHost ? forwardedHost : null,
+            timestamp: startedAt,
+        });
+    });
     next();
 });
 // --- Universal Ledger Write Surface ---------------------------------
@@ -865,7 +912,7 @@ app.post("/api/v1/commit", async (req, res) => {
         for (const event of events) {
             // event: { namespace, path, operator, data, signature, expectedPrevHash, timestamp }
             try {
-                const memory = require("./src/claim/memoryStore").appendSemanticMemory(event);
+                const memory = (0, memoryStore_1.appendSemanticMemory)(event);
                 results.push({ ok: true, memory });
             }
             catch (err) {
@@ -886,13 +933,12 @@ app.get("/api/v1/sync", async (req, res) => {
         if (!namespace) {
             return res.status(400).json({ error: "Missing namespace" });
         }
-        const all = require("./src/claim/memoryStore").listHostMemoryHistory;
         // For now, fetch all semantic memories for the namespace (future: optimize by timestamp/hash)
         // This demo assumes username and fingerprint are encoded in the namespace or query
         const username = String(req.query.username || "");
         const fingerprint = String(req.query.fingerprint || "");
         const limit = Number(req.query.limit || 2000);
-        const events = all(username, fingerprint, limit).filter((e) => Number(e?.timestamp ?? 0) > since);
+        const events = (0, memoryStore_1.listHostMemoryHistory)(namespace, username, fingerprint, limit).filter((e) => Number(e?.timestamp ?? 0) > since);
         return res.json({ events });
     }
     catch (err) {

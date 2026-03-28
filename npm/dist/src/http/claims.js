@@ -9,6 +9,7 @@ const crypto_1 = __importDefault(require("crypto"));
 const records_1 = require("../claim/records");
 const replay_1 = require("../claim/replay");
 const memoryStore_1 = require("../claim/memoryStore");
+const claimSemantics_1 = require("../claim/claimSemantics");
 const meTarget_1 = require("./meTarget");
 const envelope_1 = require("./envelope");
 const identity_1 = require("../namespace/identity");
@@ -106,32 +107,12 @@ function createClaimsRouter() {
             return res.status(status).json((0, envelope_1.createErrorEnvelope)(target, { error: out.error }));
         }
         const timestamp = Date.now();
-        (0, memoryStore_1.appendSemanticMemory)({
+        (0, claimSemantics_1.seedClaimNamespaceSemantics)({
             namespace: out.record.namespace,
-            path: "profile.username",
-            operator: "=",
-            data: profile.username,
-            timestamp,
-        });
-        (0, memoryStore_1.appendSemanticMemory)({
-            namespace: out.record.namespace,
-            path: "profile.email",
-            operator: "=",
-            data: profile.email,
-            timestamp,
-        });
-        (0, memoryStore_1.appendSemanticMemory)({
-            namespace: out.record.namespace,
-            path: "profile.phone",
-            operator: "=",
-            data: profile.phone,
-            timestamp,
-        });
-        (0, memoryStore_1.appendSemanticMemory)({
-            namespace: out.record.namespace,
-            path: "auth.claimed_at",
-            operator: "=",
-            data: timestamp,
+            username: profile.username,
+            email: profile.email,
+            phone: profile.phone,
+            passwordHash: out.record.identityHash,
             timestamp,
         });
         return res.status(201).json((0, envelope_1.createEnvelope)(target, {

@@ -40,6 +40,43 @@ export interface SelfSurfaceEntry {
   namespace: string;
   endpoint: string;
   rootName: string;
+  usage?: {
+    cpu: number;
+    requestRatePer10s?: number;
+  };
+  pressure?: {
+    cpu: number;
+  };
+  policy?: {
+    gui?: {
+      blockchain?: {
+        limit?: number;
+      };
+    };
+  };
+  budget?: {
+    gui?: {
+      blockchain?: {
+        rows?: number;
+      };
+    };
+  };
+  monitor?: {
+    recentRequests?: Array<{
+      id: number;
+      timestamp: number;
+      method: string;
+      url: string;
+      status: number;
+      durationMs: number;
+      host: string;
+      namespace: string;
+      operation: string;
+      nrp: string;
+      lens: string;
+      forwardedHost: string | null;
+    }>;
+  };
 }
 
 export type SelfDispatchMode = "unconfigured" | "foreign" | "local" | "remote" | "unscoped";

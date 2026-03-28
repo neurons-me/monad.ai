@@ -1,6 +1,7 @@
 import { db } from "../Blockchain/db";
 import { normalizeNamespaceRootName } from "../namespace/identity";
 import { appendSemanticMemory } from "./memoryStore";
+import { ROOT_SCHEMA_SEEDS } from "./semanticCatalog";
 
 function stableStringify(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
@@ -59,18 +60,8 @@ export function ensureRootSemanticBootstrap(rootNamespaceInput: string): number 
 
   const timestamp = Date.now();
 
-  const seeds: Array<{ path: string; data: unknown; operator?: string }> = [
-    { path: "schema.role.group.status", data: "adopted" },
-    { path: "schema.role.group.behavior.type", data: "entity" },
-    { path: "schema.role.group.suggest.contains", data: ["member", "policy", "channel"] },
-    { path: "schema.role.member.status", data: "adopted" },
-    { path: "schema.role.member.behavior.type", data: "collection" },
-    { path: "schema.role.member.behavior.iterator", data: "username" },
-    { path: "schema.role.member.suggest.contains", data: ["identity", "permissions", "joined_at"] },
-  ];
-
   let inserted = 0;
-  for (const seed of seeds) {
+  for (const seed of ROOT_SCHEMA_SEEDS) {
     if (ensureSemanticMemory(rootNamespace, seed.path, seed.data, seed.operator || "=", timestamp)) {
       inserted += 1;
     }

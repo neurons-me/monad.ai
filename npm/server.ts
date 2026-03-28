@@ -10,7 +10,7 @@ import { ensureRootSemanticBootstrap } from "./src/claim/semanticBootstrap";
 import { getMemoriesForNamespace } from "./src/claim/replay";
 import { getClaim } from "./src/claim/records";
 import { isNamespaceWriteAuthorized, recordMemory } from "./src/claim/replay";
-import { listSemanticMemoriesByRootNamespace } from "./src/claim/memoryStore";
+import { appendSemanticMemory, listHostMemoryHistory, listSemanticMemoriesByRootNamespace } from "./src/claim/memoryStore";
 import {
   filterBlocksByNamespace,
   formatObserverRelationLabel,
@@ -32,6 +32,11 @@ import {
   loadSelfNodeConfig,
   resolveSelfDispatch,
 } from "./src/http/selfMapping";
+import {
+  attachSurfaceStreamClient,
+  getSurfaceTelemetrySnapshot,
+  recordSurfaceRequest,
+} from "./src/http/surfaceTelemetry";
 import {
   normalizeNamespaceIdentity,
   normalizeNamespaceRootName,
@@ -345,14 +350,45 @@ app.get("/__bootstrap", (req, res) => {
     fallbackHost: NODE_HOSTNAME,
     requestNamespace: namespace,
   });
+  const telemetry = getSurfaceTelemetrySnapshot();
   return res.json(createEnvelope(target, {
     host,
     namespace,
     apiOrigin: origin,
     resolverHostName: NODE_HOSTNAME,
     resolverDisplayName: NODE_DISPLAY_NAME,
-    surfaceEntry,
+    surfaceEntry: {
+      ...surfaceEntry,
+      ...telemetry,
+    },
   }));
+});
+
+app.get("/__surface", (req, res) => {
+  const namespace = resolveNamespace(req);
+  const host = resolveTransportHost(req);
+  const hostHeader = Array.isArray(req.headers.host) ? req.headers.host[0] : req.headers.host || host;
+  const origin = `${req.protocol}://${String(hostHeader || host).trim()}`;
+  const target = normalizeHttpRequestToMeTarget(req);
+  const surfaceEntry = buildSelfSurfaceEntry({
+    self: SELF_NODE_CONFIG,
+    origin,
+    fallbackHost: NODE_HOSTNAME,
+    requestNamespace: namespace,
+  });
+
+  return res.json(createEnvelope(target, {
+    host,
+    namespace,
+    surfaceEntry: {
+      ...surfaceEntry,
+      ...getSurfaceTelemetrySnapshot(),
+    },
+  }));
+});
+
+app.get("/__surface/events", (req, res) => {
+  attachSurfaceStreamClient(req, res);
 });
 
 app.get("/__fetch", async (req, res) => {
@@ -714,12 +750,29 @@ app.use((req, _res, next) => {
   const forwardedHost = resolveHostNamespace(req);
   const target = normalizeHttpRequestToMeTarget(req);
   const lens = formatObserverRelationLabel(target.relation);
+  const startedAt = Date.now();
   const forwardedSuffix = forwardedHost && forwardedHost !== transportHost
     ? ` xf=${forwardedHost}`
     : "";
   console.log(
     `→ ${req.method} ${req.url} host=${transportHost || "unknown"} ns=${target.namespace} lens=${lens} op=${target.operation} nrp=${target.nrp}${forwardedSuffix}`
   );
+  _res.on("finish", () => {
+    if (req.path === "/__surface/events") return;
+    recordSurfaceRequest({
+      method: req.method,
+      url: req.url,
+      status: _res.statusCode,
+      durationMs: Date.now() - startedAt,
+      host: transportHost || "unknown",
+      namespace: target.namespace,
+      operation: target.operation,
+      nrp: target.nrp,
+      lens,
+      forwardedHost: forwardedHost && forwardedHost !== transportHost ? forwardedHost : null,
+      timestamp: startedAt,
+    });
+  });
   next();
 });
 
@@ -1013,7 +1066,7 @@ app.post("/api/v1/commit", async (req, res) => {
     for (const event of events) {
       // event: { namespace, path, operator, data, signature, expectedPrevHash, timestamp }
       try {
-        const memory = require("./src/claim/memoryStore").appendSemanticMemory(event);
+        const memory = appendSemanticMemory(event);
         results.push({ ok: true, memory });
       } catch (err) {
         results.push({ ok: false, error: String(err) });
@@ -1033,13 +1086,12 @@ app.get("/api/v1/sync", async (req, res) => {
     if (!namespace) {
       return res.status(400).json({ error: "Missing namespace" });
     }
-    const all = require("./src/claim/memoryStore").listHostMemoryHistory;
     // For now, fetch all semantic memories for the namespace (future: optimize by timestamp/hash)
     // This demo assumes username and fingerprint are encoded in the namespace or query
     const username = String(req.query.username || "");
     const fingerprint = String(req.query.fingerprint || "");
     const limit = Number(req.query.limit || 2000);
-    const events = all(username, fingerprint, limit).filter(
+    const events = listHostMemoryHistory(namespace, username, fingerprint, limit).filter(
       (e: { timestamp?: number }) => Number(e?.timestamp ?? 0) > since,
     );
     return res.json({ events });

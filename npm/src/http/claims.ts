@@ -3,6 +3,7 @@ import crypto from "crypto";
 import { claimNamespace, openNamespace } from "../claim/records";
 import { getMemoriesForNamespace } from "../claim/replay";
 import { appendSemanticMemory } from "../claim/memoryStore";
+import { seedClaimNamespaceSemantics } from "../claim/claimSemantics";
 import { normalizeHttpRequestToMeTarget } from "./meTarget";
 import { createEnvelope, createErrorEnvelope } from "./envelope";
 import { parseNamespaceIdentityParts } from "../namespace/identity";
@@ -113,32 +114,12 @@ export function createClaimsRouter() {
     }
 
     const timestamp = Date.now();
-    appendSemanticMemory({
+    seedClaimNamespaceSemantics({
       namespace: out.record.namespace,
-      path: "profile.username",
-      operator: "=",
-      data: profile.username,
-      timestamp,
-    });
-    appendSemanticMemory({
-      namespace: out.record.namespace,
-      path: "profile.email",
-      operator: "=",
-      data: profile.email,
-      timestamp,
-    });
-    appendSemanticMemory({
-      namespace: out.record.namespace,
-      path: "profile.phone",
-      operator: "=",
-      data: profile.phone,
-      timestamp,
-    });
-    appendSemanticMemory({
-      namespace: out.record.namespace,
-      path: "auth.claimed_at",
-      operator: "=",
-      data: timestamp,
+      username: profile.username,
+      email: profile.email,
+      phone: profile.phone,
+      passwordHash: out.record.identityHash,
       timestamp,
     });
 

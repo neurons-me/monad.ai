@@ -11,6 +11,7 @@
     "start": "tsx server.ts",
     "test": "jest --runInBand --colors",
     "test:claims": "tsx tests/claim_test_verification.ts",
+    "init:public-figures": "tsx tests/inits/public_figures/index.ts",
     "lint": "eslint . --ext .ts",
     "runBuild": "npm run build && npm run start",
     "docs:api": "typedoc --entryPoints ./server.ts --out docs/api --plugin typedoc-plugin-markdown --readme none --excludePrivate --excludeInternal",
