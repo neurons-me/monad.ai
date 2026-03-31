@@ -1,6 +1,6 @@
 import type express from "express";
 import { getAllBlocks } from "../Blockchain/blockchain";
-import { readSemanticValueForNamespace } from "../claim/memoryStore";
+import { readSemanticBranchForNamespace } from "../claim/memoryStore";
 import { resolveNamespace } from "./namespace";
 import { normalizeHttpRequestToMeTarget } from "./meTarget";
 import { createEnvelope, createErrorEnvelope } from "./envelope";
@@ -61,7 +61,7 @@ export function createPathResolverHandler() {
       return res.status(404).json(createErrorEnvelope(target, { error: "NOT_FOUND" }));
     }
 
-    const semanticResolved = readSemanticValueForNamespace(namespace, dotPath);
+    const semanticResolved = readSemanticBranchForNamespace(namespace, dotPath);
     if (typeof semanticResolved !== "undefined") {
       return res.json(createEnvelope(target, {
         namespace,

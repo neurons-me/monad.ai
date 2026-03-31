@@ -47,7 +47,7 @@ function createPathResolverHandler() {
         if (!dotPath) {
             return res.status(404).json((0, envelope_1.createErrorEnvelope)(target, { error: "NOT_FOUND" }));
         }
-        const semanticResolved = (0, memoryStore_1.readSemanticValueForNamespace)(namespace, dotPath);
+        const semanticResolved = (0, memoryStore_1.readSemanticBranchForNamespace)(namespace, dotPath);
         if (typeof semanticResolved !== "undefined") {
             return res.json((0, envelope_1.createEnvelope)(target, {
                 namespace,

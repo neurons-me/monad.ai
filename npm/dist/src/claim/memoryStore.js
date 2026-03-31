@@ -7,7 +7,10 @@ exports.createSessionNonce = createSessionNonce;
 exports.consumeSessionNonce = consumeSessionNonce;
 exports.appendSemanticMemory = appendSemanticMemory;
 exports.listSemanticMemoriesByNamespace = listSemanticMemoriesByNamespace;
+exports.listSemanticMemoriesByNamespaceBranch = listSemanticMemoriesByNamespaceBranch;
 exports.buildSemanticTreeForNamespace = buildSemanticTreeForNamespace;
+exports.buildSemanticBranchTreeForNamespace = buildSemanticBranchTreeForNamespace;
+exports.readSemanticBranchForNamespace = readSemanticBranchForNamespace;
 exports.readSemanticValueForNamespace = readSemanticValueForNamespace;
 exports.listSemanticMemoriesByRootNamespace = listSemanticMemoriesByRootNamespace;
 exports.rebuildAuthorizedHostsProjection = rebuildAuthorizedHostsProjection;
@@ -424,18 +427,62 @@ function listSemanticMemoriesByNamespace(namespaceInput, options = {}) {
     const rows = like
         ? db_1.db.prepare(`
       SELECT id, namespace, path, operator, data, hash, prevHash, signature, timestamp
-      FROM semantic_memories
-      WHERE namespace = ? AND path LIKE ?
+      FROM (
+        SELECT id, namespace, path, operator, data, hash, prevHash, signature, timestamp
+        FROM semantic_memories
+        WHERE namespace = ? AND path LIKE ?
+        ORDER BY id DESC
+        LIMIT ?
+      )
       ORDER BY id ASC
-      LIMIT ?
     `).all(namespace, like, limit)
         : db_1.db.prepare(`
       SELECT id, namespace, path, operator, data, hash, prevHash, signature, timestamp
-      FROM semantic_memories
-      WHERE namespace = ?
+      FROM (
+        SELECT id, namespace, path, operator, data, hash, prevHash, signature, timestamp
+        FROM semantic_memories
+        WHERE namespace = ?
+        ORDER BY id DESC
+        LIMIT ?
+      )
       ORDER BY id ASC
-      LIMIT ?
     `).all(namespace, limit);
+    return rows.map((row) => ({
+        id: row.id,
+        namespace: row.namespace,
+        path: row.path,
+        operator: row.operator,
+        data: parseJsonSafe(row.data),
+        hash: row.hash,
+        prevHash: row.prevHash,
+        signature: row.signature,
+        timestamp: row.timestamp,
+    }));
+}
+function listSemanticMemoriesByNamespaceBranch(namespaceInput, branchPathInput, options = {}) {
+    const namespace = String(namespaceInput || "").trim().toLowerCase();
+    if (!namespace)
+        return [];
+    const branchPath = String(branchPathInput || "")
+        .split(".")
+        .map((segment) => segment.trim())
+        .filter(Boolean)
+        .join(".");
+    if (!branchPath) {
+        return listSemanticMemoriesByNamespace(namespace, options);
+    }
+    const limit = Math.max(1, Math.min(5000, Number(options.limit || 500)));
+    const rows = db_1.db.prepare(`
+    SELECT id, namespace, path, operator, data, hash, prevHash, signature, timestamp
+    FROM (
+      SELECT id, namespace, path, operator, data, hash, prevHash, signature, timestamp
+      FROM semantic_memories
+      WHERE namespace = ? AND (path = ? OR path LIKE ?)
+      ORDER BY id DESC
+      LIMIT ?
+    )
+    ORDER BY id ASC
+  `).all(namespace, branchPath, `${branchPath}.%`, limit);
     return rows.map((row) => ({
         id: row.id,
         namespace: row.namespace,
@@ -497,12 +544,25 @@ function buildSemanticTreeForNamespace(namespaceInput, options = {}) {
     }
     return tree;
 }
-function readSemanticValueForNamespace(namespaceInput, pathInput) {
-    const tree = buildSemanticTreeForNamespace(namespaceInput);
+function buildSemanticBranchTreeForNamespace(namespaceInput, branchPathInput, options = {}) {
+    const memories = listSemanticMemoriesByNamespaceBranch(namespaceInput, branchPathInput, {
+        limit: options.limit ?? 10000,
+    });
+    const tree = {};
+    for (const memory of memories) {
+        if (memory.operator === "-") {
+            deleteDeepValue(tree, memory.path);
+            continue;
+        }
+        setDeepValue(tree, memory.path, memory.data);
+    }
+    return tree;
+}
+function getDeepValue(target, pathInput) {
     const parts = String(pathInput || "").split(".").filter(Boolean);
     if (parts.length === 0)
-        return tree;
-    let cursor = tree;
+        return target;
+    let cursor = target;
     for (const part of parts) {
         if (!isPlainObject(cursor))
             return undefined;
@@ -511,6 +571,16 @@ function readSemanticValueForNamespace(namespaceInput, pathInput) {
             return undefined;
     }
     return cursor;
+}
+function readSemanticBranchForNamespace(namespaceInput, pathInput) {
+    const path = String(pathInput || "").split(".").filter(Boolean).join(".");
+    if (!path)
+        return buildSemanticTreeForNamespace(namespaceInput);
+    const tree = buildSemanticBranchTreeForNamespace(namespaceInput, path);
+    return getDeepValue(tree, path);
+}
+function readSemanticValueForNamespace(namespaceInput, pathInput) {
+    return readSemanticBranchForNamespace(namespaceInput, pathInput);
 }
 function listSemanticMemoriesByRootNamespace(rootNamespaceInput, options = {}) {
     const rootNamespace = (0, identity_1.normalizeNamespaceRootName)(rootNamespaceInput);
