@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import os from "os";
+import path from "path";
 import { createHash } from "crypto";
 import { db, DB_PATH } from "./src/Blockchain/db";
 import { appendBlock, getAllBlocks } from "./src/Blockchain/blockchain";
@@ -23,7 +24,10 @@ import {
 } from "./src/http/namespace";
 import { buildMeTargetNrp, normalizeHttpRequestToMeTarget } from "./src/http/meTarget";
 import { createEnvelope, createErrorEnvelope } from "./src/http/envelope";
-import { createPathResolverHandler } from "./src/http/pathResolver";
+import {
+  createPathResolverHandler,
+  resolveNamespacePathValue,
+} from "./src/http/pathResolver";
 import { createClaimsRouter } from "./src/http/claims";
 import { createSessionRouter } from "./src/http/session";
 import { createLegacyRouter } from "./src/http/legacy";
@@ -38,6 +42,11 @@ import {
   recordSurfaceRequest,
 } from "./src/http/surfaceTelemetry";
 import {
+  buildNamespaceProviderBoot,
+  normalizeSurfaceRoute,
+  resolveNamespaceSurfaceSpec,
+} from "./src/http/provider";
+import {
   normalizeNamespaceIdentity,
   normalizeNamespaceRootName,
   parseNamespaceIdentityParts,
@@ -50,6 +59,21 @@ const NODE_HOSTNAME = os.hostname();
 const NODE_DISPLAY_NAME = `${NODE_HOSTNAME}:${PORT}`;
 const FETCH_PROXY_TIMEOUT_MS = Number(process.env.MONAD_FETCH_TIMEOUT_MS || 15000);
 const LOCAL_NAMESPACE_ROOT = normalizeNamespaceIdentity("localhost");
+const ME_PKG_DIST_DIR = process.env.ME_PKG_DIST_DIR
+  ? path.resolve(process.env.ME_PKG_DIST_DIR)
+  : path.resolve(process.cwd(), "../../../this/.me/npm/dist");
+const CLEAKER_PKG_DIST_DIR = process.env.CLEAKER_PKG_DIST_DIR
+  ? path.resolve(process.env.CLEAKER_PKG_DIST_DIR)
+  : path.resolve(process.cwd(), "../../cleaker/npm/dist");
+const LOCAL_REACT_UMD_DIR = process.env.LOCAL_REACT_UMD_DIR
+  ? path.resolve(process.env.LOCAL_REACT_UMD_DIR)
+  : path.resolve(process.cwd(), "../../../this/GUI/npm/node_modules/react/umd");
+const LOCAL_REACTDOM_UMD_DIR = process.env.LOCAL_REACTDOM_UMD_DIR
+  ? path.resolve(process.env.LOCAL_REACTDOM_UMD_DIR)
+  : path.resolve(process.cwd(), "../../../this/GUI/npm/node_modules/react-dom/umd");
+const MONAD_ROUTES_PATH = process.env.MONAD_ROUTES_PATH
+  ? path.resolve(process.env.MONAD_ROUTES_PATH)
+  : path.resolve(process.cwd(), "../routes.js");
 const SELF_NODE_CONFIG = loadSelfNodeConfig({
   cwd: process.cwd(),
   env: process.env,
@@ -95,6 +119,38 @@ type NamespaceSelectorInfo = {
 };
 
 const RESERVED_SHORT_NAMESPACES = new Set(["self", "kernel", "local"]);
+
+function resolveRequestOrigin(req: express.Request, fallbackHost?: string) {
+  const host = resolveTransportHost(req);
+  const hostHeader = Array.isArray(req.headers.host) ? req.headers.host[0] : req.headers.host || host;
+  return `${req.protocol}://${String(hostHeader || fallbackHost || host).trim()}`;
+}
+
+function resolveRequestSurfaceRoute(req: express.Request) {
+  const hinted = String((req.query as any)?.route || "").trim();
+  return normalizeSurfaceRoute(hinted || req.path || "/");
+}
+
+function buildRequestSurfaceEntry(req: express.Request, namespace: string) {
+  const origin = resolveRequestOrigin(req, NODE_HOSTNAME);
+  return buildSelfSurfaceEntry({
+    self: SELF_NODE_CONFIG,
+    origin,
+    fallbackHost: NODE_HOSTNAME,
+    requestNamespace: namespace,
+  });
+}
+
+function buildRequestProviderBoot(req: express.Request, namespace: string) {
+  return buildNamespaceProviderBoot({
+    namespace,
+    route: resolveRequestSurfaceRoute(req),
+    origin: resolveRequestOrigin(req, NODE_HOSTNAME),
+    resolverHostName: NODE_HOSTNAME,
+    resolverDisplayName: NODE_DISPLAY_NAME,
+    surfaceEntry: buildRequestSurfaceEntry(req, namespace),
+  });
+}
 
 function extractNamespaceSelector(namespace: string): { base: string; selectorRaw: string | null } {
   const raw = String(namespace || "").trim();
@@ -334,22 +390,40 @@ function buildNormalizedTarget(
   };
 }
 
-// Serve built GUI assets from this.GUI package dist
-app.use("/gui", express.static(GUI_PKG_DIST_DIR));
+function createNoCacheStaticOptions() {
+  return {
+    etag: false,
+    lastModified: false,
+    maxAge: 0,
+    setHeaders(res: express.Response) {
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
+    },
+  };
+}
 
-// Bootstrap endpoint for GUI runtime (namespace + endpoint hints)
+// Serve built GUI assets from this.GUI package dist.
+// During local development we want the browser to always fetch the latest bundle,
+// otherwise Cleaker can keep rendering a stale UMD after a rebuild.
+app.use("/gui", express.static(GUI_PKG_DIST_DIR, createNoCacheStaticOptions()));
+app.use("/me", express.static(ME_PKG_DIST_DIR, createNoCacheStaticOptions()));
+app.use("/cleaker", express.static(CLEAKER_PKG_DIST_DIR, createNoCacheStaticOptions()));
+app.use("/vendor/react", express.static(LOCAL_REACT_UMD_DIR, createNoCacheStaticOptions()));
+app.use("/vendor/react-dom", express.static(LOCAL_REACTDOM_UMD_DIR, createNoCacheStaticOptions()));
+app.get("/routes.js", (_req, res) => {
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+  return res.sendFile(MONAD_ROUTES_PATH);
+});
+
+// NamespaceProvider boot endpoint (semantic runtime injection)
 app.get("/__bootstrap", (req, res) => {
   const namespace = resolveNamespace(req);
   const host = resolveTransportHost(req);
-  const hostHeader = Array.isArray(req.headers.host) ? req.headers.host[0] : req.headers.host || host;
-  const origin = `${req.protocol}://${String(hostHeader || host).trim()}`;
+  const origin = resolveRequestOrigin(req, host);
   const target = normalizeHttpRequestToMeTarget(req);
-  const surfaceEntry = buildSelfSurfaceEntry({
-    self: SELF_NODE_CONFIG,
-    origin,
-    fallbackHost: NODE_HOSTNAME,
-    requestNamespace: namespace,
-  });
+  const surfaceEntry = buildRequestSurfaceEntry(req, namespace);
+  const provider = buildRequestProviderBoot(req, namespace);
   const telemetry = getSurfaceTelemetrySnapshot();
   return res.json(createEnvelope(target, {
     host,
@@ -357,6 +431,7 @@ app.get("/__bootstrap", (req, res) => {
     apiOrigin: origin,
     resolverHostName: NODE_HOSTNAME,
     resolverDisplayName: NODE_DISPLAY_NAME,
+    provider,
     surfaceEntry: {
       ...surfaceEntry,
       ...telemetry,
@@ -364,18 +439,75 @@ app.get("/__bootstrap", (req, res) => {
   }));
 });
 
+app.get("/__provider", (req, res) => {
+  const namespace = String((req.query as any)?.namespace || "").trim() || resolveNamespace(req);
+  const target = normalizeHttpRequestToMeTarget(req);
+  const provider = buildRequestProviderBoot(req, namespace);
+  return res.json(createEnvelope(target, {
+    namespace,
+    provider,
+  }));
+});
+
+app.get("/__provider/resolve", async (req, res) => {
+  const namespace = String((req.query as any)?.namespace || "").trim() || resolveNamespace(req);
+  const rawPath = String((req.query as any)?.path || "").trim();
+  const route = resolveRequestSurfaceRoute(req);
+  const target = normalizeHttpRequestToMeTarget(req);
+
+  if (!rawPath) {
+    return res.status(400).json(createErrorEnvelope(target, {
+      namespace,
+      path: "",
+      route,
+      error: "PATH_REQUIRED",
+      detail: "NamespaceProvider.resolve requires ?path=",
+    }));
+  }
+
+  const resolved = await resolveNamespacePathValue(namespace, rawPath);
+  if (!resolved.found) {
+    return res.status(404).json(createErrorEnvelope(target, {
+      namespace,
+      path: resolved.path || rawPath,
+      route,
+      error: "PATH_NOT_FOUND",
+    }));
+  }
+
+  return res.json(createEnvelope(target, {
+    namespace: resolved.namespace,
+    path: resolved.path,
+    route,
+    value: resolved.value,
+  }));
+});
+
+app.get("/__provider/surface", (req, res) => {
+  const namespace = String((req.query as any)?.namespace || "").trim() || resolveNamespace(req);
+  const route = resolveRequestSurfaceRoute(req);
+  const target = normalizeHttpRequestToMeTarget(req);
+  const surfaceEntry = buildRequestSurfaceEntry(req, namespace);
+  const surface = resolveNamespaceSurfaceSpec({
+    namespace,
+    route,
+    surfaceEntry,
+  });
+
+  return res.json(createEnvelope(target, {
+    namespace,
+    path: route,
+    route,
+    surface,
+    surfaceEntry,
+  }));
+});
+
 app.get("/__surface", (req, res) => {
   const namespace = resolveNamespace(req);
   const host = resolveTransportHost(req);
-  const hostHeader = Array.isArray(req.headers.host) ? req.headers.host[0] : req.headers.host || host;
-  const origin = `${req.protocol}://${String(hostHeader || host).trim()}`;
   const target = normalizeHttpRequestToMeTarget(req);
-  const surfaceEntry = buildSelfSurfaceEntry({
-    self: SELF_NODE_CONFIG,
-    origin,
-    fallbackHost: NODE_HOSTNAME,
-    requestNamespace: namespace,
-  });
+  const surfaceEntry = buildRequestSurfaceEntry(req, namespace);
 
   return res.json(createEnvelope(target, {
     host,
@@ -741,8 +873,11 @@ app.get("/", (req, res, next) => {
     return resolveBridgeHandler(req, res);
   }
   if (!wantsHtml(req)) return next();
+  const namespace = resolveNamespace(req);
   res.setHeader("Content-Type", "text/html; charset=utf-8");
-  return res.status(200).send(htmlShell());
+  return res.status(200).send(htmlShell({
+    providerBoot: buildRequestProviderBoot(req, namespace),
+  }));
 });
 // Minimal request logger (no identity semantics, only transport info)
 app.use((req, _res, next) => {
@@ -1109,8 +1244,11 @@ app.use(createLegacyRouter());
 app.get("/*", (req, res, next) => {
   // If a browser is requesting HTML, always return the SPA shell.
   if (wantsHtml(req)) {
+    const namespace = resolveNamespace(req);
     res.setHeader("Content-Type", "text/html; charset=utf-8");
-    return res.status(200).send(htmlShell());
+    return res.status(200).send(htmlShell({
+      providerBoot: buildRequestProviderBoot(req, namespace),
+    }));
   }
   return createPathResolverHandler()(req, res);
 });
@@ -1122,6 +1260,9 @@ app.listen(PORT, () => {
   console.log("  - Give thought:   POST /        (append JSON into current namespace)");
   console.log("  - Reach thought:  GET  /        (read current namespace surface)");
   console.log("  - Read blocks:    GET  /blocks  (explicit block stream view)");
+  console.log("  - Provider boot:  GET  /__provider");
+  console.log("  - Provider read:  GET  /__provider/resolve?path=profile/name");
+  console.log("  - Provider GUI:   GET  /__provider/surface?route=/");
 
   console.log("\n🔐 Claim Surface");
   console.log("  - Claim space:    POST /claims       (forge claim record + encrypted noise)");

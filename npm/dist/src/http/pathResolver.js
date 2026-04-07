@@ -1,5 +1,6 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.resolveNamespacePathValue = resolveNamespacePathValue;
 exports.createPathResolverHandler = createPathResolverHandler;
 const blockchain_1 = require("../Blockchain/blockchain");
 const memoryStore_1 = require("../claim/memoryStore");
@@ -26,6 +27,114 @@ function decodeBlockPayload(block) {
     }
     return outer;
 }
+function getByPath(obj, path) {
+    const parts = String(path || "").split(".").filter(Boolean);
+    let cur = obj;
+    for (const p of parts) {
+        if (cur == null)
+            return undefined;
+        cur = cur[p];
+    }
+    return cur;
+}
+function setDeep(obj, path, value) {
+    const parts = String(path || "").split(".").filter(Boolean);
+    let cur = obj;
+    for (let i = 0; i < parts.length; i++) {
+        const key = parts[i];
+        const isLast = i === parts.length - 1;
+        if (isLast) {
+            if (!(key in cur))
+                cur[key] = value;
+        }
+        else {
+            if (typeof cur[key] !== "object" || cur[key] == null || Array.isArray(cur[key])) {
+                cur[key] = {};
+            }
+            cur = cur[key];
+        }
+    }
+}
+function normalizeDotPath(input) {
+    return String(input || "")
+        .trim()
+        .replace(/^\/+/, "")
+        .replace(/\/+$/, "")
+        .replace(/\//g, ".")
+        .split(".")
+        .filter(Boolean)
+        .join(".");
+}
+async function resolveNamespacePathValue(namespaceInput, dotPathInput) {
+    const namespace = String(namespaceInput || "").trim();
+    const dotPath = normalizeDotPath(dotPathInput);
+    if (!dotPath) {
+        return {
+            namespace,
+            path: dotPath,
+            found: false,
+        };
+    }
+    const semanticResolved = (0, memoryStore_1.readSemanticBranchForNamespace)(namespace, dotPath);
+    if (typeof semanticResolved !== "undefined") {
+        return {
+            namespace,
+            path: dotPath,
+            value: semanticResolved,
+            found: true,
+        };
+    }
+    const all = await (0, blockchain_1.getAllBlocks)();
+    const blocks = all
+        .filter((b) => String(b?.namespace || "") === namespace)
+        .slice()
+        .sort((a, b) => Number(b?.timestamp || 0) - Number(a?.timestamp || 0));
+    const state = {};
+    for (const bRaw of blocks) {
+        const b = bRaw;
+        try {
+            const payload = decodeBlockPayload(b);
+            if (!payload)
+                continue;
+            const expr = String(payload.expression || b?.expression || "").trim();
+            if (!expr)
+                continue;
+            const value = Object.prototype.hasOwnProperty.call(payload ?? {}, "value")
+                ? payload.value
+                : payload;
+            if (!(expr in state))
+                state[expr] = value;
+        }
+        catch {
+        }
+    }
+    if (dotPath in state) {
+        return {
+            namespace,
+            path: dotPath,
+            value: state[dotPath],
+            found: true,
+        };
+    }
+    const tree = {};
+    for (const [expr, value] of Object.entries(state)) {
+        setDeep(tree, expr, value);
+    }
+    const resolved = getByPath(tree, dotPath);
+    if (typeof resolved === "undefined") {
+        return {
+            namespace,
+            path: dotPath,
+            found: false,
+        };
+    }
+    return {
+        namespace,
+        path: dotPath,
+        value: resolved,
+        found: true,
+    };
+}
 function createPathResolverHandler() {
     return async (req, res) => {
         const rawPath = String(req.path || "");
@@ -43,83 +152,12 @@ function createPathResolverHandler() {
                 segments = segments.slice(1);
             }
         }
-        const dotPath = segments.join(".");
+        const dotPath = normalizeDotPath(segments.join("/"));
         if (!dotPath) {
             return res.status(404).json((0, envelope_1.createErrorEnvelope)(target, { error: "NOT_FOUND" }));
         }
-        const semanticResolved = (0, memoryStore_1.readSemanticBranchForNamespace)(namespace, dotPath);
-        if (typeof semanticResolved !== "undefined") {
-            return res.json((0, envelope_1.createEnvelope)(target, {
-                namespace,
-                path: dotPath,
-                value: semanticResolved,
-            }));
-        }
-        const all = await (0, blockchain_1.getAllBlocks)();
-        const blocks = all
-            .filter((b) => String(b?.namespace || "") === String(namespace))
-            .slice()
-            .sort((a, b) => Number(b?.timestamp || 0) - Number(a?.timestamp || 0));
-        const state = {};
-        for (const bRaw of blocks) {
-            const b = bRaw;
-            try {
-                const payload = decodeBlockPayload(b);
-                if (!payload)
-                    continue;
-                const expr = String(payload.expression || b?.expression || "").trim();
-                if (!expr)
-                    continue;
-                const value = Object.prototype.hasOwnProperty.call(payload ?? {}, "value")
-                    ? payload.value
-                    : payload;
-                if (!(expr in state))
-                    state[expr] = value;
-            }
-            catch {
-            }
-        }
-        const getByPath = (obj, path) => {
-            const parts = String(path || "").split(".").filter(Boolean);
-            let cur = obj;
-            for (const p of parts) {
-                if (cur == null)
-                    return undefined;
-                cur = cur[p];
-            }
-            return cur;
-        };
-        if (dotPath in state) {
-            return res.json((0, envelope_1.createEnvelope)(target, {
-                namespace,
-                path: dotPath,
-                value: state[dotPath],
-            }));
-        }
-        const tree = {};
-        const setDeep = (obj, path, value) => {
-            const parts = String(path || "").split(".").filter(Boolean);
-            let cur = obj;
-            for (let i = 0; i < parts.length; i++) {
-                const key = parts[i];
-                const isLast = i === parts.length - 1;
-                if (isLast) {
-                    if (!(key in cur))
-                        cur[key] = value;
-                }
-                else {
-                    if (typeof cur[key] !== "object" || cur[key] == null || Array.isArray(cur[key])) {
-                        cur[key] = {};
-                    }
-                    cur = cur[key];
-                }
-            }
-        };
-        for (const [expr, value] of Object.entries(state)) {
-            setDeep(tree, expr, value);
-        }
-        const resolved = getByPath(tree, dotPath);
-        if (typeof resolved === "undefined") {
+        const resolved = await resolveNamespacePathValue(namespace, dotPath);
+        if (!resolved.found) {
             return res.status(404).json((0, envelope_1.createErrorEnvelope)(target, {
                 namespace,
                 path: dotPath,
@@ -127,9 +165,9 @@ function createPathResolverHandler() {
             }));
         }
         return res.json((0, envelope_1.createEnvelope)(target, {
-            namespace,
-            path: dotPath,
-            value: resolved,
+            namespace: resolved.namespace,
+            path: resolved.path,
+            value: resolved.value,
         }));
     };
 }

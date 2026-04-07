@@ -1,603 +1,523 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
   <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>monad.ai</title>
-    <style>
-      :root { color-scheme: light dark; }
-      body {
-        margin: 0;
-        font: 13px/1.35 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-      }
-      #runtime-controls {
-        position: sticky;
-        top: 0;
-        display: flex;
-        gap: 10px;
-        align-items: center;
-        padding: 10px 14px;
-        border-bottom: 1px solid #ddd;
-        background: #fff;
-        flex-wrap: wrap;
-      }
-      #runtime-controls label {
-        font-size: 10px;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-        color: #666;
-      }
-      #runtime-controls select {
-        border: 1px solid #ccc;
-        border-radius: 8px;
-        padding: 6px 8px;
-        min-height: 32px;
-        font: inherit;
-      }
-      .runtime-control {
-        display: flex;
-        flex-direction: column;
-        gap: 6px;
-        padding: 6px 8px;
-        border: 1px solid #eee;
-        border-radius: 10px;
-        min-width: 150px;
-      }
-      .runtime-control.state-pending { border-color: #a2750a33; }
-      .runtime-control.state-loaded { border-color: #0c7a4333; }
-      .runtime-control.state-notfound { border-color: #a12c2c33; }
-      .runtime-status {
-        font-size: 10px;
-        color: #666;
-        line-height: 1.2;
-      }
-      .runtime-status strong {
-        color: #111;
-        font-weight: 700;
-      }
-      .runtime-status .state {
-        font-weight: 700;
-        text-transform: uppercase;
-        letter-spacing: 0.04em;
-      }
-      .runtime-status .state.pending { color: #a2750a; }
-      .runtime-status .state.loaded { color: #0c7a43; }
-      .runtime-status .state.notfound { color: #a12c2c; }
-      .runtime-status .url {
-        display: block;
-        max-width: 100%;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-      }
-      .runtime-status .url-row {
-        display: flex;
-        align-items: center;
-        gap: 6px;
-      }
-      .runtime-status .url-text {
-        flex: 1;
-        min-width: 0;
-        font-size: 9px;
-        letter-spacing: 0.02em;
-        white-space: nowrap;
-        overflow: hidden;
-        text-overflow: ellipsis;
-        color: #777;
-      }
-      .runtime-status .url-toggle {
-        border: 0;
-        padding: 0 2px;
-        font-size: 9px;
-        background: transparent;
-        cursor: pointer;
-        color: #1f5fff;
-      }
-    </style>
+    <link rel="icon" href="/gui/favicon.ico" />
+    <link rel="stylesheet" href="/gui/styles.css" />
+    <script>
+      (function () {
+        var build = "20260404-inspectorjson1";
+        window.__THIS_GUI_DISABLE_AUTOBOOT__ = true;
+        window.__THIS_GUI_BOOTSTRAP_ASSETS__ = {
+          css: "/gui/styles.css?v=" + build,
+          gui: "/gui/this.gui.umd.js?v=" + build,
+          react: "/vendor/react/react.production.min.js?v=" + build,
+          reactDom: "/vendor/react-dom/react-dom.production.min.js?v=" + build,
+        };
+      })();
+    </script>
+    <script
+      src="/gui/this.gui.bootstrap.umd.js?v=20260404-inspectorjson1"
+      crossorigin="anonymous"></script>
   </head>
   <body>
-    <div id="runtime-controls">
-      <div class="runtime-control state-pending" id="runtime-gui-box">
-        <label for="gui-source">GUI</label>
-        <select id="gui-source">
-          <option value="local" selected>local</option>
-          <option value="cdn">cdn</option>
-        </select>
-        <div class="runtime-status">
-          <span class="state pending" id="runtime-gui-state">pending</span>
-          <span class="url-row">
-            <span class="url-text" id="runtime-gui-url">-</span>
-            <button class="url-toggle" id="runtime-gui-toggle" type="button" hidden>expand</button>
-          </span>
-        </div>
-      </div>
-      <div class="runtime-control state-pending" id="runtime-cleaker-box">
-        <label for="cleaker-source">Cleaker</label>
-        <select id="cleaker-source">
-          <option value="local" selected>local</option>
-          <option value="cdn">cdn</option>
-        </select>
-        <div class="runtime-status">
-          <span class="state pending" id="runtime-cleaker-state">pending</span>
-          <span class="url-row">
-            <span class="url-text" id="runtime-cleaker-url">-</span>
-            <button class="url-toggle" id="runtime-cleaker-toggle" type="button" hidden>expand</button>
-          </span>
-        </div>
-      </div>
-      <div class="runtime-control state-pending" id="runtime-me-box">
-        <label for="me-source">Me</label>
-        <select id="me-source">
-          <option value="local" selected>local</option>
-          <option value="cdn">cdn</option>
-        </select>
-        <div class="runtime-status">
-          <span class="state pending" id="runtime-me-state">pending</span>
-          <span class="url-row">
-            <span class="url-text" id="runtime-me-url">-</span>
-            <button class="url-toggle" id="runtime-me-toggle" type="button" hidden>expand</button>
-          </span>
-        </div>
-      </div>
-    </div>
-    <script>
-      (async function () {
-        const SOURCE_STORAGE_KEY = 'monad.runtime.sources.v2';
-        const THIS_GUI_STABLE_VERSION = '1.4.89';
-        const THIS_ME_CDN_VERSION = '3.4.7';
-        const CLEAKER_CDN_VERSION = '3.0.4';
-        const REACT_CDN_VERSION = '18.3.1';
-        const REACTDOM_CDN_VERSION = '18.3.1';
-        const GUI_LATEST_META_URL = 'https://registry.npmjs.org/this.gui/latest';
-        const REMOTE_ASSET_TIMEOUT_MS = 8000;
-        const IS_FILE_ORIGIN = window.location.protocol === 'file:';
-        const defaultSource = IS_FILE_ORIGIN ? 'local' : 'cdn';
-        const defaults = {
-          gui: defaultSource,
-          cleaker: defaultSource,
-          me: defaultSource,
-        };
+    <div id="root"></div>
+    <script type="module">
+      const root = document.getElementById("root");
+      const BOOT_BUILD = "20260404-inspectorjson1";
+      window.__THIS_GUI_DISABLE_AUTOBOOT__ = true;
+      const ME_RUNTIME_CANDIDATES = [
+        `/me/me.umd.js?v=${BOOT_BUILD}`,
+        `../../this/.me/npm/dist/me.umd.js?v=${BOOT_BUILD}`,
+        `/this/.me/npm/dist/me.umd.js?v=${BOOT_BUILD}`,
+        "https://cdn.jsdelivr.net/npm/this.me@3.4.7/dist/me.umd.js",
+      ];
+      const SCRIPT_LOADED_ATTR = "data-runtime-loaded";
+      const pendingScripts = new Map();
+      let bootCompleted = false;
+      let bootStep = "init";
+      let bootTicker = null;
+      let bootLog = [];
+      const bootLogSeen = new Map();
 
-        const controls = {
-          gui: document.getElementById('gui-source'),
-          cleaker: document.getElementById('cleaker-source'),
-          me: document.getElementById('me-source'),
-        };
-        const statusEls = {
-          guiBox: document.getElementById('runtime-gui-box'),
-          guiState: document.getElementById('runtime-gui-state'),
-          guiUrl: document.getElementById('runtime-gui-url'),
-          guiToggle: document.getElementById('runtime-gui-toggle'),
-          cleakerBox: document.getElementById('runtime-cleaker-box'),
-          cleakerState: document.getElementById('runtime-cleaker-state'),
-          cleakerUrl: document.getElementById('runtime-cleaker-url'),
-          cleakerToggle: document.getElementById('runtime-cleaker-toggle'),
-          meBox: document.getElementById('runtime-me-box'),
-          meState: document.getElementById('runtime-me-state'),
-          meUrl: document.getElementById('runtime-me-url'),
-          meToggle: document.getElementById('runtime-me-toggle'),
-        };
+      const BOOT_PHASES = [
+        {
+          label: "Route Handshake",
+          caption: "Linking the entry graph and route surface.",
+        },
+        {
+          label: "GUI Runtime",
+          caption: "Priming visuals, React, and the boot transport.",
+        },
+        {
+          label: "Semantic Kernel",
+          caption: "Loading and shaping the `.me` runtime.",
+        },
+        {
+          label: "Runtime Assembly",
+          caption: "Binding GUI, kernel, and router into one surface.",
+        },
+        {
+          label: "Route Binding",
+          caption: "Attaching namespace routes and dispatch rules.",
+        },
+        {
+          label: "Surface Resolve",
+          caption: "Resolving the active namespace surface.",
+        },
+        {
+          label: "Layout Mount",
+          caption: "Rendering the shell, sidebars, and namespace view.",
+        },
+        {
+          label: "System Online",
+          caption: "Boot complete. Handing off to the live interface.",
+        },
+      ];
 
-        const LOCAL_GUI_CSS = '../../this/GUI/npm/dist/styles.css';
-        const LOCAL_GUI_BOOTSTRAP = '../../this/GUI/npm/dist/this.gui.umd.js';
-        const LOCAL_REACT_UMD = '../../this/GUI/npm/node_modules/react/umd/react.production.min.js';
-        const LOCAL_REACTDOM_UMD = '../../this/GUI/npm/node_modules/react-dom/umd/react-dom.production.min.js';
-        const LOCAL_ME_UMD = '../../this/.me/npm/dist/me.umd.js';
-        const LOCAL_CLEAKER_UMD = '../cleaker/npm/dist/cleaker.umd.js';
-        const CDN_GUI_CSS = 'https://cdn.jsdelivr.net/npm/this.gui@' + THIS_GUI_STABLE_VERSION + '/dist/styles.css';
-        const CDN_GUI_BOOTSTRAP = 'https://cdn.jsdelivr.net/npm/this.gui@' + THIS_GUI_STABLE_VERSION + '/dist/this.gui.umd.js';
-        const CDN_REACT_UMD = 'https://cdn.jsdelivr.net/npm/react@' + REACT_CDN_VERSION + '/umd/react.production.min.js';
-        const CDN_REACTDOM_UMD = 'https://cdn.jsdelivr.net/npm/react-dom@' + REACTDOM_CDN_VERSION + '/umd/react-dom.production.min.js';
-        const CDN_ME_UMD = 'https://cdn.jsdelivr.net/npm/this.me@' + THIS_ME_CDN_VERSION + '/dist/me.umd.js';
-        const CDN_CLEAKER_UMD = 'https://cdn.jsdelivr.net/npm/cleaker@' + CLEAKER_CDN_VERSION + '/dist/cleaker.umd.js';
+      function escapeHtml(value) {
+        return String(value ?? "")
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#39;");
+      }
 
-        const loaded = new Set();
-        let guiLatestAssetsPromise = null;
-
-        function resolveAssetUrl(source, localUrl, cdnUrl) {
-          const target = source === 'cdn' ? cdnUrl : localUrl;
-          try {
-            return new URL(target, window.location.href).href;
-          } catch (_) {
-            return target;
+      function ensureBootStyles() {
+        if (document.getElementById("monad-boot-styles")) return;
+        const style = document.createElement("style");
+        style.id = "monad-boot-styles";
+        style.textContent = `
+          :root {
+            color-scheme: dark;
+            --boot-bg: #05080b;
+            --boot-text: #d7e5dd;
+            --boot-muted: #7c8f89;
+            --boot-accent: #8ff7dc;
+            --boot-accent-dim: #21443b;
+            --boot-warn: #ffd27a;
+            --boot-danger: #ff8da8;
+            --boot-line: #121a1f;
+            --boot-font: "IBM Plex Mono", "Space Mono", "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
           }
-        }
-
-        function formatRuntimeDetail(version, url) {
-          const origin = window.location.origin && window.location.origin !== 'null'
-            ? window.location.origin
-            : '';
-          const shortUrl = String(url || '').replace(origin, '');
-          return version ? ('v' + version + ' · ' + shortUrl) : shortUrl;
-        }
-
-        function setStatus(which, state, url, version) {
-          const boxEl = statusEls[which + 'Box'];
-          const stateEl = statusEls[which + 'State'];
-          const urlEl = statusEls[which + 'Url'];
-          const toggleEl = statusEls[which + 'Toggle'];
-          if (boxEl) {
-            boxEl.classList.remove('state-pending', 'state-loaded', 'state-notfound');
-            boxEl.classList.add('state-' + state);
+          body {
+            margin: 0;
+            background: var(--boot-bg);
+            color: var(--boot-text);
+            font-family: var(--boot-font);
           }
-          if (stateEl) {
-            stateEl.textContent = state === 'loaded'
-              ? 'Loaded'
-              : state === 'notfound'
-              ? 'NotFound'
-              : 'Pending';
-            stateEl.className = 'state ' + state;
+          #root {
+            min-height: 100vh;
           }
-          if (urlEl) {
-            const full = formatRuntimeDetail(version, url || '-');
-            const isLong = full.length > 36;
-            const short = isLong
-              ? full.slice(0, 14) + '…' + full.slice(-10)
-              : full;
-            urlEl.textContent = short;
-            urlEl.title = full;
-            urlEl.dataset.full = full;
-            urlEl.dataset.short = short;
-            urlEl.dataset.expanded = 'false';
-            if (toggleEl) {
-              toggleEl.hidden = !isLong;
-              toggleEl.textContent = 'expand';
-            }
+          .boot-shell {
+            min-height: 100vh;
+            padding: 24px;
+            box-sizing: border-box;
           }
-        }
-
-        function bindToggle(which) {
-          const urlEl = statusEls[which + 'Url'];
-          const toggleEl = statusEls[which + 'Toggle'];
-          if (!urlEl || !toggleEl) return;
-          toggleEl.addEventListener('click', function () {
-            const expanded = urlEl.dataset.expanded === 'true';
-            urlEl.textContent = expanded ? (urlEl.dataset.short || '-') : (urlEl.dataset.full || '-');
-            urlEl.dataset.expanded = expanded ? 'false' : 'true';
-            toggleEl.textContent = expanded ? 'expand' : 'collapse';
-          });
-        }
-
-        function readSources() {
-          try {
-            const parsed = JSON.parse(localStorage.getItem(SOURCE_STORAGE_KEY) || '{}');
-            const normalizeSource = function (value) {
-              return value === 'local' || value === 'cdn' ? value : defaultSource;
-            };
-            return {
-              gui: normalizeSource(parsed.gui),
-              cleaker: normalizeSource(parsed.cleaker),
-              me: normalizeSource(parsed.me),
-            };
-          } catch (_) {
-            return { ...defaults };
+          .boot-wrap {
+            max-width: 760px;
           }
-        }
+          .boot-head {
+            margin-bottom: 10px;
+            color: var(--boot-accent);
+            font-size: 12px;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+          }
+          .boot-build {
+            color: var(--boot-muted);
+            font-size: 12px;
+            margin-bottom: 18px;
+          }
+          .boot-title {
+            margin: 0;
+            font-size: 15px;
+            line-height: 1.5;
+            color: var(--boot-text);
+          }
+          .boot-copy {
+            margin: 8px 0 0;
+            color: var(--boot-muted);
+            line-height: 1.6;
+            font-size: 12px;
+          }
+          .boot-progress {
+            position: relative;
+            height: 6px;
+            background: var(--boot-line);
+            overflow: hidden;
+            margin: 18px 0 16px;
+          }
+          .boot-progress > span {
+            display: block;
+            height: 100%;
+            background: linear-gradient(90deg, var(--boot-accent-dim), var(--boot-accent));
+            transition: width 180ms ease;
+          }
+          .boot-phase {
+            color: var(--boot-text);
+            font-size: 13px;
+            margin-bottom: 6px;
+          }
+          .boot-phase strong {
+            color: var(--boot-text);
+          }
+          .boot-phase-copy {
+            color: var(--boot-muted);
+            font-size: 12px;
+            line-height: 1.6;
+          }
+          .boot-log {
+            margin: 16px 0 0;
+            padding: 0;
+            white-space: pre-wrap;
+            word-break: break-word;
+            line-height: 1.7;
+            font-size: 12px;
+            color: var(--boot-muted);
+          }
+          .boot-shell.is-stalled .boot-head,
+          .boot-shell.is-stalled .boot-title {
+            color: var(--boot-warn);
+          }
+          .boot-shell.is-error .boot-head,
+          .boot-shell.is-error .boot-title {
+            color: var(--boot-danger);
+          }
+        `;
+        document.head.appendChild(style);
+      }
 
-        function writeSources(next) {
-          try {
-            localStorage.setItem(SOURCE_STORAGE_KEY, JSON.stringify(next));
-          } catch (_) {}
-        }
+      function setBootStep(step, detail = "") {
+        bootStep = detail ? `${step}: ${detail}` : step;
+        window.__MONAD_BOOT_STEP__ = bootStep;
+      }
 
-        function syncUi() {
-          const saved = readSources();
-          controls.gui.value = saved.gui;
-          controls.cleaker.value = saved.cleaker;
-          controls.me.value = saved.me;
-        }
+      function formatGuiBootstrapStatus() {
+        const status = window.__THIS_GUI_BOOTSTRAP_STATUS__;
+        if (!status || typeof status !== "object") return "GUI bootstrap step: unknown";
+        const step = status.step || "unknown";
+        const detail = status.detail ? ` (${status.detail})` : "";
+        return `GUI bootstrap step: ${step}${detail}`;
+      }
 
-        function updateResolvedUrls() {
-          const sources = readSources();
-          setStatus('gui', 'pending', resolveAssetUrl(sources.gui, LOCAL_GUI_BOOTSTRAP, CDN_GUI_BOOTSTRAP), sources.gui === 'cdn' ? 'latest' : null);
-          setStatus('cleaker', 'pending', resolveAssetUrl(sources.cleaker, LOCAL_CLEAKER_UMD, CDN_CLEAKER_UMD), sources.cleaker === 'cdn' ? CLEAKER_CDN_VERSION : null);
-          setStatus('me', 'pending', resolveAssetUrl(sources.me, LOCAL_ME_UMD, CDN_ME_UMD), sources.me === 'cdn' ? THIS_ME_CDN_VERSION : null);
-        }
+      function formatAppStatus() {
+        const status = window.__THIS_GUI_APP_BOOT_STATUS__;
+        if (!status || typeof status !== "object") return "App boot step: unknown";
+        const step = status.step || "unknown";
+        const detail = status.detail ? ` (${status.detail})` : "";
+        return `App boot step: ${step}${detail}`;
+      }
 
-        function reloadWithSelectedSources() {
-          writeSources({
-            gui: controls.gui && controls.gui.value === 'cdn' ? 'cdn' : 'local',
-            cleaker: controls.cleaker && controls.cleaker.value === 'cdn' ? 'cdn' : 'local',
-            me: controls.me && controls.me.value === 'cdn' ? 'cdn' : 'local',
-          });
-          window.location.reload();
-        }
+      function formatRouterStatus() {
+        const status = window.__THIS_GUI_ROUTER_STATUS__;
+        if (!status || typeof status !== "object") return "Router step: unknown";
+        const step = status.step || "unknown";
+        const detail = status.detail ? ` (${status.detail})` : "";
+        return `Router step: ${step}${detail}`;
+      }
 
-        [controls.gui, controls.cleaker, controls.me].forEach(function (control) {
-          if (!control) return;
-          control.addEventListener('change', reloadWithSelectedSources);
+      function formatProviderStatus() {
+        const status = window.__THIS_GUI_PROVIDER_STATUS__;
+        if (!status || typeof status !== "object") return "Provider step: unknown";
+        const step = status.step || "unknown";
+        const detail = status.detail ? ` (${status.detail})` : "";
+        return `Provider step: ${step}${detail}`;
+      }
+
+      function deriveBootPhase() {
+        const gui = window.__THIS_GUI_BOOTSTRAP_STATUS__?.step || "";
+        const app = window.__THIS_GUI_APP_BOOT_STATUS__?.step || "";
+        const router = window.__THIS_GUI_ROUTER_STATUS__?.step || "";
+        const provider = window.__THIS_GUI_PROVIDER_STATUS__?.step || "";
+        const combined = [bootStep, gui, app, router, provider].join(" ");
+
+        if (
+          bootCompleted ||
+          /router:start:done/.test(app) ||
+          /router:navigate:done|router:mount:done/.test(router)
+        ) {
+          return { index: 7, raw: "handoff complete" };
+        }
+        if (/router:mount:start|router:mount:done/.test(router)) {
+          return { index: 6, raw: router || "router:mount:start" };
+        }
+        if (/provider:get-surface|router:resolve|router:navigate:start/.test(combined)) {
+          return { index: 5, raw: provider || router || "surface resolve" };
+        }
+        if (/register routes|register-routes|router:start/.test(combined)) {
+          return { index: 4, raw: app || bootStep };
+        }
+        if (/runtime:create|runtime:ready|router:create|router:ready|start app|route-derived/.test(combined)) {
+          return { index: 3, raw: app || bootStep };
+        }
+        if (/load me runtime|construct me|create-me/.test(combined)) {
+          return { index: 2, raw: app || bootStep };
+        }
+        if (/bootstrap gui|bootstrap:/.test(combined)) {
+          return { index: 1, raw: gui || bootStep };
+        }
+        if (/import route/.test(combined)) {
+          return { index: 0, raw: bootStep };
+        }
+        return { index: 0, raw: "handshake pending" };
+      }
+
+      function collectBootLines(extraLines = []) {
+        return [
+          `build: ${BOOT_BUILD}`,
+          `last step: ${bootStep}`,
+          formatGuiBootstrapStatus(),
+          formatAppStatus(),
+          formatRouterStatus(),
+          formatProviderStatus(),
+          ...extraLines,
+        ];
+      }
+
+      function pushBootLine(key, line) {
+        const value = String(line ?? "").trim();
+        if (!value) return;
+        if (bootLogSeen.get(key) === value) return;
+        bootLogSeen.set(key, value);
+        bootLog.push(value);
+        if (bootLog.length > 18) bootLog = bootLog.slice(-18);
+      }
+
+      function syncBootLog(message, detailLines = [], state = "normal") {
+        const phase = deriveBootPhase();
+        pushBootLine("build", `[build] ${BOOT_BUILD}`);
+        pushBootLine("title", `[title] ${message}`);
+        pushBootLine("phase", `[phase] ${phase.label}`);
+        pushBootLine("raw", `[trace] ${phase.raw}`);
+        pushBootLine("boot", `[boot] ${bootStep}`);
+        pushBootLine("gui", `[gui] ${formatGuiBootstrapStatus().replace("GUI bootstrap step: ", "")}`);
+        pushBootLine("app", `[app] ${formatAppStatus().replace("App boot step: ", "")}`);
+        pushBootLine("router", `[router] ${formatRouterStatus().replace("Router step: ", "")}`);
+        pushBootLine("provider", `[provider] ${formatProviderStatus().replace("Provider step: ", "")}`);
+        if (state !== "normal") {
+          pushBootLine("state", `[state] ${state}`);
+        }
+        detailLines.forEach((line, index) => {
+          pushBootLine(`detail:${index}`, `[diag] ${line}`);
         });
+      }
 
-        function isRemoteAssetUrl(value) {
-          return /^https?:\/\//i.test(String(value || ''));
+      function renderBootScreen(message, detailLines = [], state = "normal") {
+        if (!root) return;
+        ensureBootStyles();
+        const phase = deriveBootPhase();
+        const progress = Math.max(10, ((phase.index + 1) / BOOT_PHASES.length) * 100);
+        const summary =
+          state === "error"
+            ? "Boot fault intercepted before UI handoff."
+            : state === "stalled"
+              ? "Boot paused on one stage. The live log below shows the last successful handoff."
+              : "Boot log active. Current stage and loader progress update live below.";
+        syncBootLog(message, detailLines, state);
+        root.innerHTML = `
+          <section class="boot-shell ${state === "stalled" ? "is-stalled" : ""} ${state === "error" ? "is-error" : ""}">
+            <div class="boot-wrap">
+              <div class="boot-head">monad.ai boot</div>
+              <div class="boot-build">build ${escapeHtml(BOOT_BUILD)}</div>
+              <div class="boot-title">${escapeHtml(message)}</div>
+              <div class="boot-copy">${escapeHtml(summary)}</div>
+              <div class="boot-progress"><span style="width:${progress}%"></span></div>
+              <div class="boot-phase"><strong>${escapeHtml(phase.label)}</strong> :: ${escapeHtml(phase.raw)}</div>
+              <div class="boot-phase-copy">${escapeHtml(BOOT_PHASES[phase.index].caption)}</div>
+              <pre class="boot-log">${escapeHtml(bootLog.join("\n"))}</pre>
+            </div>
+          </section>
+        `;
+      }
+
+      function startBootTicker(title) {
+        if (bootTicker) window.clearInterval(bootTicker);
+        renderBootScreen(title, [], "normal");
+        bootTicker = window.setInterval(() => {
+          if (bootCompleted) {
+            window.clearInterval(bootTicker);
+            bootTicker = null;
+            return;
+          }
+          renderBootScreen(title, [], "normal");
+        }, 180);
+      }
+
+      function stopBootTicker() {
+        if (!bootTicker) return;
+        window.clearInterval(bootTicker);
+        bootTicker = null;
+      }
+
+      startBootTicker("MONAD.AI");
+
+      window.addEventListener("error", (event) => {
+        const detail = event?.error?.stack || event?.message || "Unknown boot error";
+        stopBootTicker();
+        renderBootScreen("[MONAD.AI] WINDOW ERROR", [detail], "error");
+      });
+
+      window.addEventListener("unhandledrejection", (event) => {
+        const reason = event?.reason;
+        const detail =
+          reason?.stack ||
+          reason?.message ||
+          (typeof reason === "string" ? reason : JSON.stringify(reason, null, 2));
+        stopBootTicker();
+        renderBootScreen("[MONAD.AI] UNHANDLED REJECTION", [detail], "error");
+      });
+
+      window.setTimeout(() => {
+        if (!bootCompleted) {
+          stopBootTicker();
+          renderBootScreen(
+            "[MONAD.AI] BOOT STALLED",
+            [
+              `GUI bootstrap expected: /gui/this.gui.bootstrap.umd.js?v=${BOOT_BUILD}`,
+              `GUI runtime expected: /gui/this.gui.umd.js?v=${BOOT_BUILD}`,
+              `ME runtime expected: /me/me.umd.js?v=${BOOT_BUILD}`,
+            ],
+            "stalled",
+          );
         }
+      }, 4000);
 
-        function loadStyle(href, options) {
-          return new Promise(function (resolve, reject) {
-            if (loaded.has(href)) return resolve(href);
-            const link = document.createElement('link');
-            link.rel = 'stylesheet';
-            link.href = href;
-            const isRemote = isRemoteAssetUrl(href);
-            let settled = false;
-            let timeoutId = null;
-            const cleanup = function () {
-              if (timeoutId != null) {
-                clearTimeout(timeoutId);
-                timeoutId = null;
-              }
-              link.onload = null;
-              link.onerror = null;
-            };
-            const finishResolve = function () {
-              if (settled) return;
-              settled = true;
-              cleanup();
-              loaded.add(href);
-              resolve(href);
-            };
-            const finishReject = function (error) {
-              if (settled) return;
-              settled = true;
-              cleanup();
-              try { link.remove(); } catch (_) {}
-              reject(error);
-            };
-            if (options && options.crossorigin) link.crossOrigin = options.crossorigin;
-            if (isRemote) {
-              timeoutId = window.setTimeout(function () {
-                finishReject(new Error('Failed to load ' + href + ' (timeout)'));
-              }, REMOTE_ASSET_TIMEOUT_MS);
-            }
-            link.onload = function () { finishResolve(); };
-            link.onerror = function () {
-              finishReject(new Error('Failed to load ' + href));
-            };
-            document.head.appendChild(link);
-          });
-        }
+      function resolveMeCtor() {
+        return window.Me || window.ME || globalThis.Me || globalThis.ME;
+      }
 
-        function loadScript(src, options) {
-          return new Promise(function (resolve, reject) {
-            if (loaded.has(src)) return resolve(src);
-            const script = document.createElement('script');
+      function loadScriptOnce(src) {
+        if (!src) return Promise.reject(new Error("Missing script src"));
+        if (pendingScripts.has(src)) return pendingScripts.get(src);
+        const existing = Array.from(document.querySelectorAll("script[src]")).find(
+          (node) => node.src === new URL(src, document.baseURI).href,
+        );
+        if (existing && existing.getAttribute(SCRIPT_LOADED_ATTR) === "true") return Promise.resolve(true);
+
+        const promise = new Promise((resolve, reject) => {
+          const script = existing || document.createElement("script");
+          if (!existing) {
             script.src = src;
-            script.async = false;
-            const isRemote = isRemoteAssetUrl(src);
-            let settled = false;
-            let timeoutId = null;
-            const cleanup = function () {
-              if (timeoutId != null) {
-                clearTimeout(timeoutId);
-                timeoutId = null;
+            if (/^https?:/i.test(src)) script.crossOrigin = "anonymous";
+          }
+          script.onload = () => {
+            script.setAttribute(SCRIPT_LOADED_ATTR, "true");
+            resolve(true);
+          };
+          script.onerror = () => reject(new Error(`Failed to load script: ${src}`));
+          if (!existing) document.head.appendChild(script);
+        }).finally(() => {
+          pendingScripts.delete(src);
+        });
+        pendingScripts.set(src, promise);
+        return promise;
+      }
+
+      let meRuntimePromise = null;
+      async function ensureMeRuntime() {
+        const existingCtor = resolveMeCtor();
+        if (typeof existingCtor === "function") return existingCtor;
+        if (!meRuntimePromise) {
+          meRuntimePromise = (async () => {
+            let lastError = null;
+            for (const src of ME_RUNTIME_CANDIDATES) {
+              try {
+                await loadScriptOnce(src);
+                const ctor = resolveMeCtor();
+                if (typeof ctor === "function") return ctor;
+                lastError = new Error(`.me runtime loaded but no constructor was exposed: ${src}`);
+              } catch (error) {
+                lastError = error;
               }
-              script.onload = null;
-              script.onerror = null;
-            };
-            const finishResolve = function () {
-              if (settled) return;
-              settled = true;
-              cleanup();
-              loaded.add(src);
-              resolve(src);
-            };
-            const finishReject = function (error) {
-              if (settled) return;
-              settled = true;
-              cleanup();
-              try { script.remove(); } catch (_) {}
-              reject(error);
-            };
-            if (options && options.crossorigin) script.crossOrigin = options.crossorigin;
-            if (isRemote) {
-              timeoutId = window.setTimeout(function () {
-                finishReject(new Error('Failed to load ' + src + ' (timeout)'));
-              }, REMOTE_ASSET_TIMEOUT_MS);
             }
-            script.onload = function () { finishResolve(); };
-            script.onerror = function () {
-              finishReject(new Error('Failed to load ' + src));
-            };
-            document.head.appendChild(script);
+            throw lastError || new Error("Failed to load .me runtime");
+          })().catch((error) => {
+            meRuntimePromise = null;
+            throw error;
           });
         }
+        return meRuntimePromise;
+      }
 
-        async function probeLocalAsset(url) {
-          if (IS_FILE_ORIGIN) return null;
+      async function importFirst(candidates) {
+        let lastError = null;
+        for (const candidate of candidates) {
           try {
-            const resolved = new URL(url, window.location.href);
-            if (resolved.origin !== window.location.origin) return null;
-            const response = await fetch(resolved.href, {
-              method: 'HEAD',
-              cache: 'no-store',
-            });
-            if (response.status === 405 || response.status === 501) {
-              return null;
-            }
-            return response.ok;
-          } catch (_) {
-            return false;
-          }
-        }
-
-        function getAssetLoadCandidates(source, localSrc, cdnSrc) {
-          if (source === 'local') {
-            return [
-              { source: 'local', url: resolveAssetUrl('local', localSrc, cdnSrc), options: undefined },
-              { source: 'cdn', url: resolveAssetUrl('cdn', localSrc, cdnSrc), options: { crossorigin: 'anonymous' } },
-            ];
-          }
-          return [
-            { source: 'cdn', url: resolveAssetUrl('cdn', localSrc, cdnSrc), options: { crossorigin: 'anonymous' } },
-            { source: 'local', url: resolveAssetUrl('local', localSrc, cdnSrc), options: undefined },
-          ];
-        }
-
-        async function loadSelectedAsset(source, localSrc, cdnSrc, kind) {
-          const candidates = getAssetLoadCandidates(source, localSrc, cdnSrc);
-          const loader = kind === 'style' ? loadStyle : loadScript;
-          let lastError = null;
-          for (let i = 0; i < candidates.length; i += 1) {
-            const candidate = candidates[i];
-            try {
-              if (candidate.source === 'local') {
-                const available = await probeLocalAsset(candidate.url);
-                if (available === false) {
-                  lastError = new Error('Local asset not available: ' + candidate.url);
-                  continue;
-                }
-              }
-              await loader(candidate.url, candidate.options);
-              return candidate;
-            } catch (error) {
-              lastError = error;
-            }
-          }
-          throw lastError || new Error('Failed to load ' + kind + ' asset.');
-        }
-
-        async function loadRuntimeScriptWithFallback(source, localSrc, cdnSrc) {
-          return loadSelectedAsset(source, localSrc, cdnSrc, 'script');
-        }
-
-        async function ensureReactRuntime(source) {
-          const hasReact = Boolean(window.React && typeof window.React.createContext === 'function');
-          const hasReactDOM = Boolean(window.ReactDOM && typeof window.ReactDOM.createRoot === 'function');
-          if (!hasReact) {
-            await loadRuntimeScriptWithFallback(source, LOCAL_REACT_UMD, CDN_REACT_UMD);
-          }
-          if (!hasReactDOM) {
-            await loadRuntimeScriptWithFallback(source, LOCAL_REACTDOM_UMD, CDN_REACTDOM_UMD);
-          }
-        }
-
-        function buildGuiVersionedAssets(version) {
-          const normalized = String(version || '').trim();
-          return {
-            css: 'https://cdn.jsdelivr.net/npm/this.gui@' + normalized + '/dist/styles.css',
-            js: 'https://cdn.jsdelivr.net/npm/this.gui@' + normalized + '/dist/this.gui.umd.js',
-            version: normalized,
-          };
-        }
-
-        function getGuiStableAssets() {
-          return buildGuiVersionedAssets(THIS_GUI_STABLE_VERSION);
-        }
-
-        async function resolveGuiLatestAssets() {
-          if (guiLatestAssetsPromise) return guiLatestAssetsPromise;
-          guiLatestAssetsPromise = (async function () {
-            try {
-              const response = await fetch(GUI_LATEST_META_URL, { cache: 'no-store' });
-              if (!response.ok) throw new Error('latest metadata failed: ' + response.status);
-              const payload = await response.json();
-              const version = String(payload && payload.version || '').trim();
-              return version ? buildGuiVersionedAssets(version) : getGuiStableAssets();
-            } catch (_) {
-              return getGuiStableAssets();
-            }
-          })();
-          return guiLatestAssetsPromise;
-        }
-
-        function getLocalGuiAssets() {
-          return {
-            css: resolveAssetUrl('local', LOCAL_GUI_CSS, CDN_GUI_CSS),
-            js: resolveAssetUrl('local', LOCAL_GUI_BOOTSTRAP, CDN_GUI_BOOTSTRAP),
-          };
-        }
-
-        async function loadGuiRuntimeAssets(source) {
-          const latestAssets = await resolveGuiLatestAssets();
-          const stableAssets = getGuiStableAssets();
-          const localAssets = getLocalGuiAssets();
-          const candidates = source === 'local'
-            ? [
-                { source: 'local', css: localAssets.css, js: localAssets.js, version: null, local: true },
-                { source: 'stable', css: stableAssets.css, js: stableAssets.js, version: stableAssets.version, options: { crossorigin: 'anonymous' } },
-                { source: 'latest', css: latestAssets.css, js: latestAssets.js, version: latestAssets.version, options: { crossorigin: 'anonymous' } },
-              ]
-            : [
-                { source: 'latest', css: latestAssets.css, js: latestAssets.js, version: latestAssets.version, options: { crossorigin: 'anonymous' } },
-                { source: 'stable', css: stableAssets.css, js: stableAssets.js, version: stableAssets.version, options: { crossorigin: 'anonymous' } },
-                { source: 'local', css: localAssets.css, js: localAssets.js, version: null, local: true },
-              ];
-          let lastError = null;
-          for (let i = 0; i < candidates.length; i += 1) {
-            const candidate = candidates[i];
-            try {
-              if (candidate.local) {
-                const cssAvailable = await probeLocalAsset(candidate.css);
-                const jsAvailable = await probeLocalAsset(candidate.js);
-                if (cssAvailable === false || jsAvailable === false) {
-                  lastError = new Error('Local GUI runtime not available.');
-                  continue;
-                }
-              }
-              await loadStyle(candidate.css, candidate.options);
-              await loadScript(candidate.js, candidate.options);
-              return {
-                source: candidate.source,
-                url: candidate.js,
-                css: candidate.css,
-                version: candidate.version || null,
-              };
-            } catch (error) {
-              lastError = error;
-            }
-          }
-          throw lastError || new Error('Failed to load GUI runtime.');
-        }
-
-        async function loadGui(source) {
-          setStatus('gui', 'pending', resolveAssetUrl(source, LOCAL_GUI_BOOTSTRAP, CDN_GUI_BOOTSTRAP), source === 'cdn' ? 'latest' : null);
-          try {
-            await ensureReactRuntime(source);
-            const asset = await loadGuiRuntimeAssets(source);
-            const version =
-              (window.GUI && (window.GUI.version || window.GUI.VERSION || window.GUI.__version)) ||
-              asset.version ||
-              null;
-            setStatus('gui', 'loaded', asset.url, version);
+            return await import(candidate);
           } catch (error) {
-            const fallbackUrl = resolveAssetUrl(source, LOCAL_GUI_BOOTSTRAP, CDN_GUI_BOOTSTRAP);
-            setStatus('gui', 'notfound', fallbackUrl, source === 'cdn' ? THIS_GUI_STABLE_VERSION : null);
+            lastError = error;
           }
         }
+        throw lastError || new Error("Failed to import module");
+      }
 
-        async function loadCleaker(source) {
-          setStatus('cleaker', 'pending', resolveAssetUrl(source, LOCAL_CLEAKER_UMD, CDN_CLEAKER_UMD), source === 'cdn' ? CLEAKER_CDN_VERSION : null);
-          try {
-            const asset = await loadRuntimeScriptWithFallback(source, LOCAL_CLEAKER_UMD, CDN_CLEAKER_UMD);
-            const version = asset.source === 'cdn' ? CLEAKER_CDN_VERSION : null;
-            setStatus('cleaker', 'loaded', asset.url, version);
-          } catch (_) {
-            setStatus('cleaker', 'notfound', resolveAssetUrl(source, LOCAL_CLEAKER_UMD, CDN_CLEAKER_UMD), source === 'cdn' ? CLEAKER_CDN_VERSION : null);
-          }
+      try {
+        setBootStep("import routes");
+        const { registerMonadRoutes } = await importFirst([
+          "./routes.js",
+          "/routes.js",
+        ]);
+
+        setBootStep("bootstrap gui");
+        const GUI =
+          typeof window.bootGUI === "function"
+            ? await window.bootGUI()
+            : window.ThisGUI || window.thisGUI || window.GUI || window["this.gui"];
+
+        if (!GUI || typeof GUI.startApp !== "function") {
+          throw new Error("GUI startApp missing");
         }
 
-        async function loadMe(source) {
-          setStatus('me', 'pending', resolveAssetUrl(source, LOCAL_ME_UMD, CDN_ME_UMD), source === 'cdn' ? THIS_ME_CDN_VERSION : null);
-          try {
-            const asset = await loadRuntimeScriptWithFallback(source, LOCAL_ME_UMD, CDN_ME_UMD);
-            const version = asset.source === 'cdn' ? THIS_ME_CDN_VERSION : null;
-            setStatus('me', 'loaded', asset.url, version);
-          } catch (_) {
-            setStatus('me', 'notfound', resolveAssetUrl(source, LOCAL_ME_UMD, CDN_ME_UMD), source === 'cdn' ? THIS_ME_CDN_VERSION : null);
-          }
+        const boot = window.__MONAD_NAMESPACE_PROVIDER_BOOT__;
+        if (!boot) {
+          throw new Error("Namespace provider boot missing");
         }
 
-        syncUi();
-        updateResolvedUrls();
-        bindToggle('gui');
-        bindToggle('cleaker');
-        bindToggle('me');
+        if (typeof window.__MONAD_CREATE_NAMESPACE_PROVIDER__ !== "function") {
+          throw new Error("Namespace provider factory missing");
+        }
 
-        const sources = readSources();
-        await loadGui(sources.gui);
-        await loadCleaker(sources.cleaker);
-        await loadMe(sources.me);
-      })();
+        window.GUI = GUI;
+        window.provider = window.__MONAD_CREATE_NAMESPACE_PROVIDER__(GUI);
+        window.monadProvider = window.provider;
+
+        setBootStep("load me runtime");
+        const MeCtor = await ensureMeRuntime();
+        setBootStep("construct me");
+        const me = new MeCtor();
+
+        setBootStep("start app");
+        await GUI.startApp({
+          root,
+          basePath: "/",
+          me,
+          registerRoutes(router) {
+            setBootStep("register routes");
+            return registerMonadRoutes(router, {
+              provider: window.provider,
+              namespace: boot.namespace,
+              gui: GUI,
+              boot,
+            });
+          },
+          gui: GUI,
+        });
+        stopBootTicker();
+        setBootStep("ready");
+        bootCompleted = true;
+      } catch (error) {
+        stopBootTicker();
+        renderBootScreen(
+          "[MONAD.AI] BOOT FAULT",
+          [error?.stack || error?.message || String(error)],
+          "error",
+        );
+        console.error("[monad.ai]", error);
+      }
     </script>
   </body>
 </html>

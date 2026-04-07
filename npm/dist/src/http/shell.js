@@ -8,9 +8,10 @@ exports.wantsHtml = wantsHtml;
 exports.htmlShell = htmlShell;
 const path_1 = __importDefault(require("path"));
 const fs_1 = __importDefault(require("fs"));
+const provider_1 = require("./provider");
 exports.GUI_PKG_DIST_DIR = process.env.GUI_PKG_DIST_DIR
     ? path_1.default.resolve(process.env.GUI_PKG_DIST_DIR)
-    : path_1.default.resolve(process.cwd(), "../../this/GUI/npm/dist");
+    : path_1.default.resolve(process.cwd(), "../../../this/GUI/npm/dist");
 exports.MONAD_INDEX_PATH = process.env.MONAD_INDEX_PATH
     ? path_1.default.resolve(process.env.MONAD_INDEX_PATH)
     : path_1.default.resolve(process.cwd(), "../index.html");
@@ -18,16 +19,18 @@ function wantsHtml(req) {
     const accept = String(req.headers.accept || "");
     return accept.includes("text/html");
 }
-function htmlShell() {
+function htmlShell(options = {}) {
+    const providerBoot = options.providerBoot || null;
     try {
         if (fs_1.default.existsSync(exports.MONAD_INDEX_PATH)) {
-            return fs_1.default.readFileSync(exports.MONAD_INDEX_PATH, "utf8");
+            const html = fs_1.default.readFileSync(exports.MONAD_INDEX_PATH, "utf8");
+            return providerBoot ? (0, provider_1.injectNamespaceProviderShell)(html, providerBoot) : html;
         }
     }
     catch {
         // fall back to inline shell
     }
-    return `<!doctype html>
+    const fallbackHtml = `<!doctype html>
 <html>
   <head>
     <meta charset="utf-8" />
@@ -54,28 +57,36 @@ function htmlShell() {
       if (!ReactDOM) throw new Error('ReactDOM global is missing. Failed to load react-dom.production.min.js');
       await import('/gui/this.gui.umd.js');
       const GUI = globalThis.ThisGUI || globalThis.thisGUI || globalThis.GUI || globalThis['this.gui'];
-      const boot = await fetch("/__bootstrap").then(r => r.json());
-      let spec = null;
+      const providerBoot = globalThis.__MONAD_NAMESPACE_PROVIDER_BOOT__ || null;
+      let provider = null;
+      if (providerBoot && typeof globalThis.__MONAD_CREATE_NAMESPACE_PROVIDER__ === 'function') {
+        provider = globalThis.__MONAD_CREATE_NAMESPACE_PROVIDER__(GUI);
+      }
+      let surface = null;
       try {
-        spec = await fetch(\`/gui/entry?ns=\${encodeURIComponent(boot.namespace)}\`).then(r => r.json());
+        if (provider) {
+          surface = await provider.getSurface(providerBoot.namespace, providerBoot.route);
+        }
       } catch (e) {
-        spec = null;
+        surface = null;
       }
 
       const guiRuntime = (GUI && (GUI.default || GUI.GUI || GUI)) || {};
-      console.log("GUI boot", boot);
-      console.log("GUI spec", spec);
+      console.log("GUI provider boot", providerBoot);
+      console.log("GUI provider", provider);
+      console.log("GUI surface", surface);
       console.log("GUI runtime", guiRuntime);
       const el = document.querySelector('#app');
       if (el) {
         const pre = document.createElement('pre');
         pre.style.fontFamily = "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace";
         pre.style.padding = '16px';
-        pre.textContent = \`cleaker GUI shell loaded\\nnamespace: \${boot.namespace}\\nhost: \${boot.host}\\n(apiOrigin: \${boot.apiOrigin})\\nGUI global: \${GUI ? 'present' : 'missing'}\`;
+        pre.textContent = \`monad provider shell loaded\\nnamespace: \${providerBoot ? providerBoot.namespace : '-'}\\nroute: \${providerBoot ? providerBoot.route : '-'}\\n(apiOrigin: \${providerBoot ? providerBoot.apiOrigin : '-'})\\nprovider: \${provider ? 'ready' : 'missing'}\\nGUI global: \${GUI ? 'present' : 'missing'}\`;
         el.innerHTML = '';
         el.appendChild(pre);
       }
     </script>
   </body>
 </html>`;
+    return providerBoot ? (0, provider_1.injectNamespaceProviderShell)(fallbackHtml, providerBoot) : fallbackHtml;
 }
