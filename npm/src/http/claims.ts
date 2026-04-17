@@ -2,7 +2,7 @@ import express from "express";
 import crypto from "crypto";
 import { claimNamespace, openNamespace } from "../claim/records";
 import { getMemoriesForNamespace } from "../claim/replay";
-import { appendSemanticMemory } from "../claim/memoryStore";
+import { appendSemanticMemory, readSemanticValueForNamespace } from "../claim/memoryStore";
 import { seedClaimNamespaceSemantics } from "../claim/claimSemantics";
 import { normalizeHttpRequestToMeTarget } from "./meTarget";
 import { createEnvelope, createErrorEnvelope } from "./envelope";
@@ -34,6 +34,27 @@ function parseNamespaceIdentity(namespace: string) {
   return parseNamespaceIdentityParts(namespace);
 }
 
+export function readOpenedClaimProfile(namespace: string) {
+  const identity = parseNamespaceIdentity(namespace);
+  const username = normalizeUsername(
+    readSemanticValueForNamespace(namespace, "profile.username") || identity.username || "",
+  );
+  const name = normalizeName(readSemanticValueForNamespace(namespace, "profile.name"));
+  const email = normalizeEmail(readSemanticValueForNamespace(namespace, "profile.email"));
+  const phone = normalizePhone(readSemanticValueForNamespace(namespace, "profile.phone"));
+  const claimedAt = Number(readSemanticValueForNamespace(namespace, "auth.claimed_at") || 0);
+
+  return {
+    profile: {
+      username,
+      name,
+      email,
+      phone,
+    },
+    claimedAt: Number.isFinite(claimedAt) && claimedAt > 0 ? claimedAt : null,
+  };
+}
+
 function getDefaultReadPolicy(namespace: string) {
   const identity = parseNamespaceIdentity(namespace);
   const allowed = ["profile/*", "me/public/*", `${namespace}/*`];
@@ -54,6 +75,10 @@ function normalizePhone(input: unknown): string {
   return String(input || "").trim();
 }
 
+function normalizeName(input: unknown): string {
+  return String(input || "").trim().replace(/\s+/g, " ");
+}
+
 function normalizeUsername(input: unknown): string {
   return String(input || "").trim().toLowerCase();
 }
@@ -61,10 +86,12 @@ function normalizeUsername(input: unknown): string {
 function validateClaimProfile(body: Record<string, unknown>, namespace: string) {
   const identity = parseNamespaceIdentity(namespace);
   const username = normalizeUsername(body.username);
+  const name = normalizeName(body.name);
   const email = normalizeEmail(body.email);
   const phone = normalizePhone(body.phone);
 
   if (!username) return { ok: false as const, error: "USERNAME_REQUIRED" };
+  if (!name) return { ok: false as const, error: "NAME_REQUIRED" };
   if (!email) return { ok: false as const, error: "EMAIL_REQUIRED" };
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return { ok: false as const, error: "EMAIL_INVALID" };
   if (!phone) return { ok: false as const, error: "PHONE_REQUIRED" };
@@ -76,6 +103,7 @@ function validateClaimProfile(body: Record<string, unknown>, namespace: string) 
   return {
     ok: true as const,
     username,
+    name,
     email,
     phone,
   };
@@ -117,6 +145,7 @@ export function createClaimsRouter() {
     seedClaimNamespaceSemantics({
       namespace: out.record.namespace,
       username: profile.username,
+      name: profile.name,
       email: profile.email,
       phone: profile.phone,
       passwordHash: out.record.identityHash,
@@ -130,6 +159,7 @@ export function createClaimsRouter() {
       createdAt: out.record.createdAt,
       profile: {
         username: profile.username,
+        name: profile.name,
         email: profile.email,
         phone: profile.phone,
       },
@@ -168,6 +198,7 @@ export function createClaimsRouter() {
     });
     const policy = getDefaultReadPolicy(out.record.namespace);
     const identity = parseNamespaceIdentity(out.record.namespace);
+    const openedClaim = readOpenedClaimProfile(out.record.namespace);
     const audit = {
       proofId: computeProofId({
         namespace: out.record.namespace,
@@ -187,6 +218,8 @@ export function createClaimsRouter() {
       audit,
       namespace: out.record.namespace,
       identityHash: out.record.identityHash,
+      createdAt: openedClaim.claimedAt || out.record.createdAt,
+      profile: openedClaim.profile,
       noise: out.noise,
       memories,
       openedAt,

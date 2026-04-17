@@ -25,7 +25,6 @@ Reason:
 ## Exchange Layers
 
 ### Semantic request
-
 The client conceptually asks for:
 
 - a canonical NRP target
@@ -37,7 +36,6 @@ Example semantic target:
 - `nrp://cleaker.me/users/ana/read/profile.name`
 
 ### Transport request
-
 The HTTP transport maps that target into:
 
 - method
@@ -54,23 +52,18 @@ Example:
 ## Canonical Operations
 
 ### `read`
-
 Read a resolved semantic value from a remote namespace.
 
 ### `write`
-
 Append a thought or memory event into a remote namespace.
 
 ### `claim`
-
 Forge or reserve namespace identity.
 
 ### `open`
-
 Verify the namespace trinity and recover replay state.
 
 ## Response Envelope
-
 All remote HTTP responses should use a common envelope.
 
 ```json
@@ -96,7 +89,6 @@ All remote HTTP responses should use a common envelope.
 ```
 
 Rules:
-
 - `ok` is always present
 - `operation` is always present
 - `target.namespace` is always canonical
@@ -107,7 +99,6 @@ Rules:
 ## Read Contract
 
 ### Request
-
 Example:
 
 ```http
@@ -253,7 +244,6 @@ Content-Type: application/json
 ```
 
 ## Error Contract
-
 All failures should use this shape:
 
 ```json
@@ -276,13 +266,11 @@ All failures should use this shape:
 ```
 
 Rules:
-
 - `error.code` is stable and machine-readable
 - `error.message` is human-readable
 - HTTP status and JSON error code must agree
 
 Recommended mappings:
-
 - `400` -> `BAD_REQUEST`
 - `401` -> `UNAUTHORIZED`
 - `403` -> `NAMESPACE_WRITE_FORBIDDEN`
@@ -292,7 +280,6 @@ Recommended mappings:
 - `500` -> `INTERNAL_ERROR`
 
 ## Compatibility Rule
-
 During migration, the server may continue returning the current minimal read shape:
 
 ```json
@@ -305,14 +292,11 @@ During migration, the server may continue returning the current minimal read sha
 ```
 
 Client normalization should accept both:
-
 - legacy minimal shape
 - full response envelope
 
 ## Client Normalization
-
 The `remotePointer` client should normalize read responses as follows:
-
 1. If `result.value` exists, use that.
 2. Else if top-level `value` exists, use that.
 3. Else return the full payload as raw data.
@@ -320,12 +304,10 @@ The `remotePointer` client should normalize read responses as follows:
 This preserves compatibility with the current server while allowing a richer contract.
 
 ## Future Extension
-
 After the envelope stabilizes, add optional:
 
 - `@context`
 - signed namespace records
 - response signatures
 - content negotiation for `application/ld+json`
-
 But those should be additive, not required for the first remote contract.

@@ -4,6 +4,7 @@ import { buildClaimSemanticSeeds } from "./semanticCatalog";
 export function seedClaimNamespaceSemantics(input: {
   namespace: string;
   username: string;
+  name: string;
   email: string;
   phone: string;
   passwordHash: string;
@@ -14,6 +15,7 @@ export function seedClaimNamespaceSemantics(input: {
 
   const seeds = [
     { path: "profile.username", data: String(input.username || "").trim().toLowerCase() },
+    { path: "profile.name", data: String(input.name || "").trim() },
     { path: "profile.email", data: String(input.email || "").trim().toLowerCase() },
     { path: "profile.phone", data: String(input.phone || "").trim() },
     { path: "auth.claimed_at", data: timestamp },

@@ -3,6 +3,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.readOpenedClaimProfile = readOpenedClaimProfile;
 exports.createClaimsRouter = createClaimsRouter;
 const express_1 = __importDefault(require("express"));
 const crypto_1 = __importDefault(require("crypto"));
@@ -34,6 +35,23 @@ function computeProofId(input) {
 function parseNamespaceIdentity(namespace) {
     return (0, identity_1.parseNamespaceIdentityParts)(namespace);
 }
+function readOpenedClaimProfile(namespace) {
+    const identity = parseNamespaceIdentity(namespace);
+    const username = normalizeUsername((0, memoryStore_1.readSemanticValueForNamespace)(namespace, "profile.username") || identity.username || "");
+    const name = normalizeName((0, memoryStore_1.readSemanticValueForNamespace)(namespace, "profile.name"));
+    const email = normalizeEmail((0, memoryStore_1.readSemanticValueForNamespace)(namespace, "profile.email"));
+    const phone = normalizePhone((0, memoryStore_1.readSemanticValueForNamespace)(namespace, "profile.phone"));
+    const claimedAt = Number((0, memoryStore_1.readSemanticValueForNamespace)(namespace, "auth.claimed_at") || 0);
+    return {
+        profile: {
+            username,
+            name,
+            email,
+            phone,
+        },
+        claimedAt: Number.isFinite(claimedAt) && claimedAt > 0 ? claimedAt : null,
+    };
+}
 function getDefaultReadPolicy(namespace) {
     const identity = parseNamespaceIdentity(namespace);
     const allowed = ["profile/*", "me/public/*", `${namespace}/*`];
@@ -51,16 +69,22 @@ function normalizeEmail(input) {
 function normalizePhone(input) {
     return String(input || "").trim();
 }
+function normalizeName(input) {
+    return String(input || "").trim().replace(/\s+/g, " ");
+}
 function normalizeUsername(input) {
     return String(input || "").trim().toLowerCase();
 }
 function validateClaimProfile(body, namespace) {
     const identity = parseNamespaceIdentity(namespace);
     const username = normalizeUsername(body.username);
+    const name = normalizeName(body.name);
     const email = normalizeEmail(body.email);
     const phone = normalizePhone(body.phone);
     if (!username)
         return { ok: false, error: "USERNAME_REQUIRED" };
+    if (!name)
+        return { ok: false, error: "NAME_REQUIRED" };
     if (!email)
         return { ok: false, error: "EMAIL_REQUIRED" };
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
@@ -75,6 +99,7 @@ function validateClaimProfile(body, namespace) {
     return {
         ok: true,
         username,
+        name,
         email,
         phone,
     };
@@ -110,6 +135,7 @@ function createClaimsRouter() {
         (0, claimSemantics_1.seedClaimNamespaceSemantics)({
             namespace: out.record.namespace,
             username: profile.username,
+            name: profile.name,
             email: profile.email,
             phone: profile.phone,
             passwordHash: out.record.identityHash,
@@ -122,6 +148,7 @@ function createClaimsRouter() {
             createdAt: out.record.createdAt,
             profile: {
                 username: profile.username,
+                name: profile.name,
                 email: profile.email,
                 phone: profile.phone,
             },
@@ -156,6 +183,7 @@ function createClaimsRouter() {
         });
         const policy = getDefaultReadPolicy(out.record.namespace);
         const identity = parseNamespaceIdentity(out.record.namespace);
+        const openedClaim = readOpenedClaimProfile(out.record.namespace);
         const audit = {
             proofId: computeProofId({
                 namespace: out.record.namespace,
@@ -174,6 +202,8 @@ function createClaimsRouter() {
             audit,
             namespace: out.record.namespace,
             identityHash: out.record.identityHash,
+            createdAt: openedClaim.claimedAt || out.record.createdAt,
+            profile: openedClaim.profile,
             noise: out.noise,
             memories,
             openedAt,

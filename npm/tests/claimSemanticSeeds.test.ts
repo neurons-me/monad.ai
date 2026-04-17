@@ -35,6 +35,7 @@ describe("claim semantic seeds", () => {
     seedClaimNamespaceSemantics({
       namespace,
       username,
+      name: "Polls Studio Seed User",
       email: `${username}@example.com`,
       phone: "5512345678",
       passwordHash: claim.record.identityHash,
@@ -42,6 +43,7 @@ describe("claim semantic seeds", () => {
     });
 
     expect(readSemanticValueForNamespace(namespace, "keys.username")).toBe(username);
+    expect(readSemanticValueForNamespace(namespace, "profile.name")).toBe("Polls Studio Seed User");
     expect(readSemanticValueForNamespace(namespace, "keys.password_hash")).toBeTruthy();
     expect(readSemanticValueForNamespace(namespace, "keys.namespace")).toBe(namespace);
     expect(readSemanticValueForNamespace(namespace, "polls.studio.categories.jobs.label")).toBe("Jobs");

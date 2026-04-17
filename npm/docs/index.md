@@ -1,5 +1,4 @@
 # Monad.ai
-
 Monad.ai is the daemon host for the `me://` runtime.
 
 This package exposes:

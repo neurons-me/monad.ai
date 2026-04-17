@@ -6,3 +6,4 @@ Run with logs on:
 PORT=7777 INSTANCE_NAME=monad-a RUST_LOG=debug cargo run
 ```
 
+Experimental, please use node.js for a more stable version.

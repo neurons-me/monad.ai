@@ -8,6 +8,7 @@ function seedClaimNamespaceSemantics(input) {
     const namespace = String(input.namespace || "").trim().toLowerCase();
     const seeds = [
         { path: "profile.username", data: String(input.username || "").trim().toLowerCase() },
+        { path: "profile.name", data: String(input.name || "").trim() },
         { path: "profile.email", data: String(input.email || "").trim().toLowerCase() },
         { path: "profile.phone", data: String(input.phone || "").trim() },
         { path: "auth.claimed_at", data: timestamp },
