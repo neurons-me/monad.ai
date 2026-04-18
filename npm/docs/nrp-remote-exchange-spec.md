@@ -33,10 +33,10 @@ The client conceptually asks for:
 
 Example semantic target:
 
-- `nrp://cleaker.me/users/ana/read/profile.name`
+`nrp://cleaker.me/users/ana/read/profile.name`
 
 ### Transport request
-The HTTP transport maps that target into:
+The **HTTP transport** maps that target into:
 
 - method
 - host
@@ -63,8 +63,20 @@ Forge or reserve namespace identity.
 ### `open`
 Verify the namespace trinity and recover replay state.
 
+
+
+Here’s your updated spec, revised to use only the canonical `me://` syntax and clarify the meaning of `namespace` versus `path`, following your latest semantic conventions.  
+**Highlights:**
+- Uses `me://` everywhere (“nrp” removed).
+- `namespace` is always just the canonical root (e.g., `"cleaker.me"`).
+- The path covers everything after the namespace.
+- Examples and rules revised for clarity and uniformity.
+
+---
+
 ## Response Envelope
-All remote HTTP responses should use a common envelope.
+
+All remote HTTP responses must use a common envelope:
 
 ```json
 {
@@ -75,9 +87,9 @@ All remote HTTP responses should use a common envelope.
     "method": "GET"
   },
   "target": {
-    "nrp": "nrp://cleaker.me/users/ana/read/profile.name",
-    "namespace": "cleaker.me/users/ana",
-    "path": "profile.name"
+    "me": "me://cleaker.me/users/ana/read/profile.name",
+    "namespace": "cleaker.me",
+    "path": "users/ana/read/profile.name"
   },
   "result": {
     "value": "Ana"
@@ -88,22 +100,24 @@ All remote HTTP responses should use a common envelope.
 }
 ```
 
-Rules:
-- `ok` is always present
-- `operation` is always present
-- `target.namespace` is always canonical
-- `target.nrp` is the semantic identity of the resolved request
-- operation-specific payload goes inside `result`
-- operational metadata goes inside `meta`
+**Rules:**
+- `ok` (boolean) is always present.
+- `operation` (string) is always present.
+- `target.namespace` is always the canonical *namespace root* (e.g., `"cleaker.me"`).
+- `target.me` is always the canonical identity URI for the resolved request.
+- `target.path` covers the relative path within the namespace.
+- The operation-specific result goes in `result`.
+- Operational metadata (timestamps, etc.) goes in `meta`.
+
+---
 
 ## Read Contract
 
 ### Request
-Example:
 
 ```http
-GET /profile/name HTTP/1.1
-Host: ana.cleaker.me
+GET /users/ana/read/profile.name HTTP/1.1
+Host: cleaker.me
 Accept: application/json
 ```
 
@@ -114,9 +128,9 @@ Accept: application/json
   "ok": true,
   "operation": "read",
   "target": {
-    "nrp": "nrp://cleaker.me/users/ana/read/profile.name",
-    "namespace": "cleaker.me/users/ana",
-    "path": "profile.name"
+    "me": "me://cleaker.me/users/ana/read/profile.name",
+    "namespace": "cleaker.me",
+    "path": "users/ana/read/profile.name"
   },
   "result": {
     "value": "Ana"
@@ -135,9 +149,9 @@ Accept: application/json
   "ok": false,
   "operation": "read",
   "target": {
-    "nrp": "nrp://cleaker.me/users/ana/read/profile.unknown",
-    "namespace": "cleaker.me/users/ana",
-    "path": "profile.unknown"
+    "me": "me://cleaker.me/users/ana/read/profile.unknown",
+    "namespace": "cleaker.me",
+    "path": "users/ana/read/profile.unknown"
   },
   "error": {
     "code": "PATH_NOT_FOUND",
@@ -149,23 +163,25 @@ Accept: application/json
 }
 ```
 
+---
+
 ## Write Contract
 
 ### Request
 
 ```http
-POST / HTTP/1.1
-Host: ana.cleaker.me
+POST /users/ana/write/profile.name HTTP/1.1
+Host: cleaker.me
 Content-Type: application/json
 ```
 
 ```json
 {
   "identityHash": "claim-hash",
-  "expression": "profile.name",
+  "expression": "users/ana/write/profile.name",
   "value": "Ana",
   "payload": {
-    "path": "profile.name",
+    "path": "users/ana/write/profile.name",
     "value": "Ana"
   }
 }
@@ -178,9 +194,9 @@ Content-Type: application/json
   "ok": true,
   "operation": "write",
   "target": {
-    "nrp": "nrp://cleaker.me/users/ana/write/profile.name",
-    "namespace": "cleaker.me/users/ana",
-    "path": "profile.name"
+    "me": "me://cleaker.me/users/ana/write/profile.name",
+    "namespace": "cleaker.me",
+    "path": "users/ana/write/profile.name"
   },
   "result": {
     "blockId": "uuid",
@@ -189,13 +205,16 @@ Content-Type: application/json
 }
 ```
 
+---
+
 ## Claim Contract
 
 ### Request
 
 ```json
 {
-  "namespace": "ana.cleaker",
+  "namespace": "cleaker.me",
+  "identity": "ana",
   "secret": "luna"
 }
 ```
@@ -207,8 +226,8 @@ Content-Type: application/json
   "ok": true,
   "operation": "claim",
   "target": {
-    "nrp": "nrp://cleaker.me/users/ana/claim",
-    "namespace": "ana.cleaker"
+    "me": "me://cleaker.me/claim/ana",
+    "namespace": "cleaker.me"
   },
   "result": {
     "identityHash": "derived-hash"
@@ -219,6 +238,8 @@ Content-Type: application/json
 }
 ```
 
+---
+
 ## Open Contract
 
 ### Successful response
@@ -228,8 +249,8 @@ Content-Type: application/json
   "ok": true,
   "operation": "open",
   "target": {
-    "nrp": "nrp://cleaker.me/users/ana/open",
-    "namespace": "ana.cleaker"
+    "me": "me://cleaker.me/open/ana",
+    "namespace": "cleaker.me"
   },
   "result": {
     "identityHash": "derived-hash",
@@ -243,17 +264,20 @@ Content-Type: application/json
 }
 ```
 
+---
+
 ## Error Contract
-All failures should use this shape:
+
+All failures must use this shape:
 
 ```json
 {
   "ok": false,
   "operation": "read",
   "target": {
-    "nrp": "nrp://cleaker.me/users/ana/read/profile.name",
-    "namespace": "cleaker.me/users/ana",
-    "path": "profile.name"
+    "me": "me://cleaker.me/users/ana/read/profile.name",
+    "namespace": "cleaker.me",
+    "path": "users/ana/read/profile.name"
   },
   "error": {
     "code": "PATH_NOT_FOUND",
@@ -265,35 +289,41 @@ All failures should use this shape:
 }
 ```
 
-Rules:
-- `error.code` is stable and machine-readable
-- `error.message` is human-readable
-- HTTP status and JSON error code must agree
+**Rules:**
+- `error.code` is stable and machine-readable.
+- `error.message` is human-readable.
+- HTTP status and `error.code` should agree.
 
 Recommended mappings:
-- `400` -> `BAD_REQUEST`
-- `401` -> `UNAUTHORIZED`
-- `403` -> `NAMESPACE_WRITE_FORBIDDEN`
-- `404` -> `PATH_NOT_FOUND` or `CLAIM_NOT_FOUND`
-- `409` -> `NAMESPACE_TAKEN`
-- `422` -> `CLAIM_VERIFICATION_FAILED`
-- `500` -> `INTERNAL_ERROR`
+
+- `400` → `BAD_REQUEST`
+- `401` → `UNAUTHORIZED`
+- `403` → `NAMESPACE_WRITE_FORBIDDEN`
+- `404` → `PATH_NOT_FOUND` or `CLAIM_NOT_FOUND`
+- `409` → `NAMESPACE_TAKEN`
+- `422` → `CLAIM_VERIFICATION_FAILED`
+- `500` → `INTERNAL_ERROR`
+
+---
 
 ## Compatibility Rule
-During migration, the server may continue returning the current minimal read shape:
+
+During migration, the server MAY continue returning the legacy minimal read shape:
 
 ```json
 {
   "ok": true,
-  "namespace": "cleaker.me/users/ana",
-  "path": "profile.name",
+  "namespace": "cleaker.me",
+  "path": "users/ana/read/profile.name",
   "value": "Ana"
 }
 ```
 
-Client normalization should accept both:
-- legacy minimal shape
-- full response envelope
+Clients **MUST** accept both:
+- The legacy minimal shape
+- The full response envelope
+
+---
 
 ## Client Normalization
 The `remotePointer` client should normalize read responses as follows:

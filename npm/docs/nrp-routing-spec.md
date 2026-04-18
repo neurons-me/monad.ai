@@ -1,215 +1,135 @@
 # NRP Routing Spec
 
 ## Purpose
-This document fixes the boundary between `.me`, `nrp`, and the `cleaker` server.
 
-- `.me` is the local semantic kernel.
-- `nrp` is the semantic addressing layer.
-- `cleaker` server is an HTTP transport and persistence surface for remote namespaces.
+This document defines the clear boundaries and contract between:
 
-The server must expose `cleaker.me` and related HTTP routes. It must not redefine `nrp://local` as a network resource.
+- **`.me`**: The local semantic kernel (in-process logic, expression evaluation, and memory).
+- **NRP**: The semantic addressing and routing layer, responsible for creating canonical targets and transport-agnostic identity.
+- **`cleaker` server**: The HTTP network surface for exposing, persisting, and resolving remote namespaces.
 
-## Layer Contract
+> **Note:**  
+> In all runtime routing, logs, and response envelopes, canonical resource identities MUST use the `me://` URI scheme.  
+> The term “NRP target” refers to the *logical* semantic identity; in all APIs, payloads, and client/server exchanges, **use only `me://` as the canonical format**.
 
-### `.me`
+---
 
-`.me` owns:
-- local state
-- local execution
-- local memory replay
-- local path semantics
+## Layer Responsibilities
 
-Examples:
-- `profile.name`
-- `friends.ana.bio`
-- `friends[age > 18].name`
+### `.me` (Semantic Kernel)
+- Owns **local state, execution, and replay**
+- Resolves path selectors and expressions (e.g. `profile.name`, `friends.ana.bio`, or `friends[age>18].name`)
+- Handles purely local evaluation, never exposed as a network transport
 
-### `nrp`
-`nrp` owns:
-- semantic target identity
-- local vs remote addressing
-- transport-agnostic destination syntax
+### NRP (Semantic Routing & Addressing)
+- Defines **canonical semantic target identity**
+- Maps between local and remote (addressing, not transport)
+- Provides transport-agnostic selectors
 
-Examples:
-- `nrp://local/profile.name`
-- `nrp://self/profile.name`
-- `nrp://ana.cleaker/read/profile`
+### `cleaker` HTTP server
+- Exposes HTTP routes for remote (and sometimes local) namespace access
+- Handles remote block persistence, replay, claims, and open flows
+- Maps incoming host/path/method to canonical namespace and target
+- Operates as a transport—**it NEVER resolves `nrp://local` or `nrp://self` targets**, which are always handled by `.me`/runtime.
 
-### `cleaker` server
-The server owns:
-- claim and open flows
-- remote namespace persistence
-- block append and replay
-- HTTP route exposure for remote surfaces
-- mapping HTTP host/path requests into canonical namespace strings
+---
 
-Examples:
-- `POST /claims`
-- `POST /claims/open`
-- `POST /`
-- `GET /`
-- `GET /blocks`
+## Layer Boundaries and Example Targets
 
-## Non-Goals
+| Layer     | Conceptual Target Example                                    | Resolved By                               |
+| --------- | ------------------------------------------------------------ | ----------------------------------------- |
+| **`.me`** | `profile.name`<br>`friends.ana.bio`                          | Local in-process (`.me` kernel)           |
+| **NRP**   | `nrp://local/profile.name`<br>`nrp://cleaker.me/users/ana/read/profile.name` | Routing/binder (not HTTP server)          |
+| **HTTP**  | `me://cleaker.me/users/ana/read/profile.name`<br>`https://cleaker.me/@ana/profile` | `cleaker` HTTP server (via normalization) |
 
-The server does not own:
-- in-process `.me` execution
-- `nrp://local`
-- `nrp://self`
-Those targets are resolved inside the local runtime or binder.
+---
 
-## Canonical Target Classes
+## Canonical Target Structure
 
-### Local sovereign target
-Resolved without network.
-Examples:
-- `nrp://local/profile.name`
-- `nrp://self/profile.name`
-Expected resolver:
-- `.me` kernel
-- `cleaker(me)` binder when bound to an in-process kernel
+- **Canonical “resource identity”** (always use `me://...`):
+  ```json
+  {
+    "me": "me://cleaker.me/users/ana/read/profile.name",
+    "namespace": "cleaker.me",
+    "path": "users/ana/read/profile.name"
+  }
+  ```
 
-### Remote namespace target
-Resolved through a transport.
-Examples:
-- `nrp://ana.cleaker/read/profile`
-- `ana.cleaker:read/profile`
-- `https://cleaker.me/@ana/profile`
-- `https://ana.cleaker.me/profile`
+- *Rules:*
+    - `namespace` is always the canonical root identity (`cleaker.me`, `localhost`).
+    - `path` is always **everything after the namespace** (can include selectors).
+    - `me` is the unique, canonical identifier for the resource, using all path segments.
 
-Expected resolver:
-- `cleaker` HTTP server
+---
 
-## Canonical Namespace Model
-The server should continue using canonical namespace strings as the internal storage key.
-Current examples already implemented:
-- `cleaker.me`
-- `cleaker.me/users/ana`
-- `cleaker.me/relations/ana+bella`
-- `localhost`
-- `localhost/users/ana`
+## Mapping: HTTP → Namespace → Canonical Target
 
-Rule:
-- host and path are transport syntax
-- canonical namespace is the storage identity
-- NRP target is the semantic identity
+| HTTP Request Example                 | Canonical Namespace                    | Canonical Target/`me://`                     |
+| ------------------------------------ | -------------------------------------- | -------------------------------------------- |
+| `GET https://cleaker.me/`            | `cleaker.me`                           | `me://cleaker.me/read`                       |
+| `GET https://ana.cleaker.me/`        | `cleaker.me`<br/>users/ana             | `me://cleaker.me/users/ana/read`             |
+| `GET https://cleaker.me/@ana`        | `cleaker.me`<br/>users/ana             | `me://cleaker.me/users/ana/read`             |
+| `GET https://cleaker.me/@ana+bella`  | `cleaker.me`<br/>relations/ana+bella   | `me://cleaker.me/relations/ana+bella/read`   |
+| `GET https://cleaker.me/@ana/@bella` | `cleaker.me`<br/>users/ana/users/bella | `me://cleaker.me/users/ana/users/bella/read` |
+| `GET http://localhost:8161/`         | `localhost`                            | `me://localhost/read`                        |
+| `GET http://ana.localhost:8161/`     | `localhost`<br/>users/ana              | `me://localhost/users/ana/read`              |
 
-These three must map deterministically.
-
-## HTTP to Namespace to NRP Mapping
-
-### Root host
-HTTP:
-- `GET https://cleaker.me/`
-Canonical namespace:
-- `cleaker.me`
-Canonical NRP:
-- `nrp://cleaker.me/read`
-
-### User subdomain
-HTTP:
-- `GET https://ana.cleaker.me/`
-Canonical namespace:
-- `cleaker.me/users/ana`
-Canonical NRP:
-- `nrp://cleaker.me/users/ana/read`
-
-### User path selector
-HTTP:
-- `GET https://cleaker.me/@ana`
-Canonical namespace:
-- `cleaker.me/users/ana`
-Canonical NRP:
-- `nrp://cleaker.me/users/ana/read`
-
-### Symmetric relation
-HTTP:
-- `GET https://cleaker.me/@ana+bella`
-Canonical namespace:
-- `cleaker.me/relations/ana+bella`
-
-Canonical NRP:
-- `nrp://cleaker.me/relations/ana+bella/read`
-
-### Nested directional path
-HTTP:
-- `GET https://cleaker.me/@ana/@bella`
-Canonical namespace:
-- `cleaker.me/users/ana/users/bella`
-Canonical NRP:
-- `nrp://cleaker.me/users/ana/users/bella/read`
-
-### Local dev host
-HTTP:
-- `GET http://localhost:8161/`
-Canonical namespace:
-- `localhost`
-Canonical NRP:
-- `nrp://localhost/read`
-
-### Local dev user subdomain
-HTTP:
-- `GET http://ana.localhost:8161/`
-Canonical namespace:
-- `localhost/users/ana`
-Canonical NRP:
-- `nrp://localhost/users/ana/read`
+---
 
 ## Write Mapping
-For writes, the target resource remains the current resolved namespace.
-Examples:
-- `POST https://cleaker.me/` with `Host: ana.cleaker.me`
-- `POST https://cleaker.me/` with `x-forwarded-host: ana.cleaker.me`
 
-Canonical namespace:
-- `cleaker.me/users/ana`
-Canonical NRP intent:
-- `nrp://cleaker.me/users/ana/write`
-Claim/open remain namespace operations, not path operations:
-- `POST /claims`
-- `POST /claims/open`
+- Write targets always resolve to the **current canonical namespace**.
+    - Example: `POST https://cleaker.me/` with `Host: ana.cleaker.me` or `x-forwarded-host: ana.cleaker.me`
+        - Canonical namespace: `cleaker.me`
+        - Request path/selector: `users/ana`
+        - Canonical target: `me://cleaker.me/users/ana/write/...`
+    - Claim/open operations:
+        - Always operate only on the `namespace`, not a path.
 
-Body:
-- `namespace`
-- `secret`
-
-## Binder Responsibilities
-`cleaker(me)` should decide resolution by target class:
-- local `.me` expression -> resolve in-process
-- `nrp://local/...` -> resolve in-process
-- `nrp://self/...` -> resolve in currently bound kernel
-- `ana.cleaker:read/profile` or equivalent remote target -> resolve through configured transport
-
-This means the binder should treat `nrp` as the router and the server as one transport backend.
-
-## Parsing Guidance
-Short-term:
-- keep current `.cleaker:read/...` support
-- keep current host/path HTTP routing
-- do not force `nrp://` into the server API yet
-
-Medium-term:
-- add a canonical parser that normalizes:
-  - `ana.cleaker:read/profile`
-  - `nrp://cleaker.me/users/ana/read/profile`
-  - `https://ana.cleaker.me/profile`
-
-All three should converge to one internal target record.
+---
 
 ## Server Rules
-1. The server may expose HTTP routes for remote namespaces.
-2. The server must never claim ownership of `nrp://local`.
-3. `resolveNamespace(req)` should stay transport-facing and return canonical namespace strings.
-4. A separate normalization layer should map canonical namespace strings to canonical NRP targets.
-5. Claim/open logic should remain namespace-based, not tied to a particular URL shape.
+
+1. The server may expose HTTP routes for remote namespaces only.
+2. The server must **never** resolve or claim ownership of `nrp://local` or `nrp://self`—these are only for local/in-process.
+3. Route normalization (`resolveNamespace(req)`) must always return:
+    - canonical `namespace` string
+    - canonical resource `me://` URI
+    - extracted operation kind (e.g., `read`, `write`, `claim`, `open`)
+4. A dedicated normalization utility (not http routes themselves) is responsible for host/path/method → canonical target.
+5. Claims and open flows are always namespace operations, never path-specific.
+
+---
 
 ## Immediate Implementation Priority
-The next practical step is not to expose a literal `nrp://` HTTP endpoint.
-The next step is to add one normalization utility on the server side:
-- input: host + path + method
-- output:
-  - canonical namespace
-  - canonical NRP target
-  - operation kind: `read`, `write`, `claim`, `open`
 
-That utility becomes the contract between routing and the engine.
+**Do not implement any explicit `nrp://` HTTP endpoint.**
+
+Instead, focus on implementing and using the canonical normalization utility:
+
+- **Input**: `{host, path, method}`
+- **Output**:
+    - canonical namespace
+    - canonical `me://` target
+    - operation kind (`read`, `write`, `claim`, `open`)
+
+This utility **is** the contract between HTTP routing and the backend engine.  
+All server-side audits, logging, and envelopes MUST use the canonical `me://` URI and namespace/path separation described above.
+
+---
+
+## Future Guidance
+
+- When adding new transports or selectors, reference only the canonical normalization output (me://, namespace, path, operation).
+- If alternate protocol support (e.g. JSON-LD, gRPC) is added later, maintain this canonical mapping for all core resource identity and access logic.
+- For mesh, relay, or peer-to-peer surface, ensure every participant speaks and records canonical `me://` targets.
+
+---
+
+### In summary
+
+- **`.me`** = local semantics, never networked.
+- **NRP** = semantic routing, resolved by binder.
+- **`cleaker` server** = HTTP/persistence/transport, always via normalized, canonical targets, never resolving `nrp://local`.
+- **Canonical resource identity and all audits/envelopes use only `me://` URIs.**
+

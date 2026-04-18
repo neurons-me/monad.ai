@@ -1,5 +1,5 @@
-# monad.ai - AlterEgo.
-###### The daemon for `me://` 
+# monad.ai
+###### AlterEgo  `me://` 
 `me://[prefix.]constant:selector/path`
 **1 key = 1 subject = N monads.ai**
 **Namespace** binding host:

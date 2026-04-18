@@ -1,5 +1,1 @@
-**monad.ai**
-
-***
-
 # monad.ai
