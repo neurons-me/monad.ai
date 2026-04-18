@@ -1,16 +1,15 @@
 # monad.ai - AlterEgo.
-###### **monad.ai** is the daemon for `me://` 
+###### The daemon for `me://` 
 `me://[prefix.]constant:selector/path`
-
-1 llave = 1 sujeto = N monads.ai
-
-**Namespace** binding viene del **host:**
+**1 key = 1 subject = N monads.ai**
+**Namespace** binding host:
 `me://[prefix.]namespace[context]:selector/path`
 
-Entonces, en esa gramática:
-**[prefix.]constant = namespace**
-- selector = intent/operation
-- path = ruta semántica
+**Grammar:**
+
+**[prefix.]constant** = namespace
+**selector** = intent/operation
+**path** = ruta semántica
 
 ---
 
@@ -48,99 +47,105 @@ So now the **namespace resolution protocol** reads cleanly:
 
 ---
 
-# **Algebra de audiencias cifradas**.
-- el context define **dónde/cuáles nodos**
-- la capability define **qué acción está permitida**
-- la encryption define **quién puede abrir ese contenido**
+# **Algebra of Encrypted Audiences**
 
-La forma matemática sería separar tres sets:
+In this algebra, access and visibility are determined by the interplay of three sets:
 
-- T = **topology set**
-  - en qué nodos vive o se replica el ciphertext
-- A = **audience set**
-  - qué identidades pueden descifrar
-- P = **procedure/capability set**
-  - qué acciones pueden ejecutar sobre eso
+- **Context** defines *where* and *on which nodes* data resides.
+- **Capability** defines *which actions* are permitted on the data.
+- **Encryption** defines *who can decrypt* and read the content.
 
-  Entonces una “encrypted island” sería algo así:
+Mathematically, we express these properties as three sets:
 
-```
-Island I = (path, ciphertext, T, A, P) 
-```
+- **T** = *Topology set*
+  - On which nodes does the ciphertext exist or replicate?
+- **A** = *Audience set*
+  - Which identities are authorized to decrypt?
+- **P** = *Procedure/Capability set*
+  - What actions can be performed on this content?
 
-Ejemplo:
-- imagen guardada en:
-  - office-node
-  - iphone
-  - backup-daemon
-
-  Eso es:
+Thus, an **“encrypted island”** can be formally represented as:
 
 ```
-T = {office, iphone, backup} 
+Island I = (path, ciphertext, T, A, P)
 ```
 
-Pero solo tú y tu esposa pueden abrirla:
+**Example:**  
+Suppose an image is saved and replicated across:
+
+- `office-node`
+- `iphone`
+- `backup-daemon`
+
+Topology set:
 
 ```
-A = {me, wife} 
+T = {office, iphone, backup}
 ```
 
-Entonces sí:
-- **muchos nodos pueden guardar la isla**
-- pero solo un subconjunto puede leerla
+But only you and your spouse can decrypt it:
+
+```
+A = {me, wife}
+```
+
+In other words:
+
+- **Multiple nodes may store the island**, but only a specific subset of users can read it.
 
 ---
 
-A clean way to hold it is:
-- space is the primary thing
-- the rest are predicates or projections over that space
-- everything is refinement, union, intersection, membership, replication
+A clean way to conceptualize this is:
 
-So:
-- public space = its readable audience approaches the open set
-- private space = audience is tightly bounded, often {self}
-- shared space = audience is a union like {me ∪ wife ∪ ...}
-- encrypted space = membership in the readable audience is enforced cryptographically
-- replicated space = the topology set has multiple carriers
-- local space, remote space, hosted space = just different topology bindings
+- **“Space” is the primary entity:** all other properties are predicates or projections over that space.
+- Everything else—membership, replication, visibility, or capabilities—is expressed as refinements, unions, intersections, or other set operations.
 
-You can even write it as one space with different sets:
-- A = audience set
-- T = topology set
-- C = capability/action set
-- P = path/subspace set
+Common cases, then, are simple statements about the sets:
 
-Then the adjectives are just statements about those sets:
-- private: A = {self}
-- shared: |A| > 1
-- encrypted: access to A is cryptographically enforced
-- replicated: |T| > 1
-- public: A is open or broadly readable
+| Property        | Predicate                                   |
+| --------------- | ------------------------------------------- |
+| **private**     | `A = {self}`                                |
+| **shared**      | `|A| > 1`                                   |
+| **public**      | `A` is open or broadly readable             |
+| **encrypted**   | Access to `A` is enforced cryptographically |
+| **replicated**  | `|T| > 1`                                   |
+| **local**       | `T` includes only the local node            |
+| **distributed** | `T` includes remote or multiple nodes       |
+
+**You can formalize any “space” as:**
+
+- **A**: The audience set (who can read)
+- **T**: The topology set (where it lives)
+- **C**: The capability/action set (what can be done)
+- **P**: The path/subspace (context or semantic location)
+
+**Adjectives** like “private”, “shared”, “replicated”, or “encrypted” are then just properties over those sets. For example:
+
+- **private**: Only the owner can read (`A = {self}`)
+- **shared**: More than one party can read (`|A| > 1`)
+- **public**: Anyone can read (`A` is open)
+- **replicated**: The content exists on multiple nodes (`|T| > 1`)
+- **encrypted**: Only members of `A` can decrypt, enforced cryptographically
+
+This algebra enables rigorous, composable modeling of trust, replication, and control in distributed, encrypted systems.
 
 ---
 
-# La Visión: El Claim del Namespace
-Lo que buscas es que el primer acto de tu kernel sea un **Claim**.
-1. **Local Claim:** `me://local` (Yo soy este nodo).
-2. **Network Claim:** `me://username.cleaker.me` (Yo soy esta identidad en el ledger).
-Al hacer esto, tu `me://` ya no es un alias genérico; se convierte en una **URL Soberana Determinista**.
+# The Vision: Namespace Claims
 
-----
+The very first act your kernel performs should be to make a **Claim**.
 
-La Visión: El Claim del Namespace
-Lo que buscas es que el primer acto de tu kernel sea un **Claim**.
-1. **Local Claim:** `me://local` (Yo soy este nodo).
-2. **Network Claim:** `me://username.cleaker.me` (Yo soy esta identidad en el ledger).
-Al hacer esto, tu `me://` ya no es un alias genérico; se convierte en una **URL Soberana Determinista**.
+1. **Local Claim:** `me://local`
 
-----
+   > “I am this node.”
 
-**B primero, luego C.**
+2. **Network Claim:** `me://username.cleaker.me`
 
-El documento que escribimos ya es bueno como visión, pero ahora que tienes el análisis real del repo encima de la mesa, necesitamos anclar cada sección a lo que existe vs. lo que falta. Si saltamos directo a reescribir el doc sin el mapa, volvemos a escribir visión en lugar de protocolo.
+   > “I am this identity in the ledger.”
 
-Vamos al mapa.
+By doing this, your `me://` identifier is no longer a generic alias—it becomes a **Sovereign Deterministic URL**.
+
+------
 
 ------
 
@@ -163,7 +168,7 @@ Vamos al mapa.
 | `authorized_hosts` en memoryStore                            | ✅ Existe               | `memoryStore.ts`           |
 | Replay hydration                                             | ✅ Funcional            | monad.ai                   |
 
-### Lo que está a MEDIO CAMINO
+### Review
 
 | Componente                                         | Problema real                                                | Archivo                                              |
 | -------------------------------------------------- | ------------------------------------------------------------ | ---------------------------------------------------- |
@@ -172,7 +177,7 @@ Vamos al mapa.
 | Claim ceremony                                     | Funciona para el flujo HTTP básico, pero el token es temporal en memoria — no hay HMAC sobre namespace key, no hay nonce registry de consumidos, no hay handshake criptográfico de key transfer | `manager.ts`                                         |
 | Documentación                                      | Partida entre specs viejas `nrp://` y el runtime que ya canonizó `me://` | `nrp-routing-spec.md`, `nrp-remote-exchange-spec.md` |
 
-### Lo que FALTA completamente
+### Missing
 
 | Componente                                  | Gap                                                          | Impacto                          |
 | ------------------------------------------- | ------------------------------------------------------------ | -------------------------------- |

@@ -7,7 +7,7 @@ Semantic installer for initiating basic context:
 
 ## Run
 ```bash
-cd /Users/suign/Desktop/Neuroverse/neurons.me/core/monad.ai/npm
+cd monad.ai/npm
 npm run init:public-figures
 ```
 

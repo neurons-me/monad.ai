@@ -1,9 +1,7 @@
-## Monads
-this.me define la identidad.
-monad porta la identidad.
-Run with logs on:
-```bash
-PORT=7777 INSTANCE_NAME=monad-a RUST_LOG=debug cargo run
-```
+## Monad.ai
+**.me** defines identity.
+**monad.ai** computes it.
 
-Experimental, please use node.js for a more stable version.
+###### Experimental, please use node.js for a more stable version.
+
+**neurons.me**

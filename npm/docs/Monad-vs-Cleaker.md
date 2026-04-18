@@ -1,9 +1,9 @@
-# Monad, Cleaker, and Public Roots
+# monad.ai, Cleaker, and Public Roots
 
 This page fixes a common confusion in the stack:
 
 - `.me` is the semantic kernel
-- `monad.ai` is the daemon that runs it
+- `monad.ai` is the daemon 
 - `cleaker` is the ledger interface and public semantic network layer
 - `cleaker.me` is the canonical public root that adopts that layer
 
@@ -40,9 +40,9 @@ It owns:
 - persistence
 - remote execution
 - transport entrypoints
-- hosting one or more namespace surfaces
+- hosting namespace surfaces
 
-A monad can run only for you on localhost, or it can be exposed publicly on the WAN.
+A **monad.ai** can run only for you on localhost, or it can be exposed publicly on the WAN.
 
 ### `cleaker`
 
@@ -70,7 +70,7 @@ It gives public structure to things like:
 
 `cleaker.me` is not a different protocol.
 
-It is a public domain running a monad that adopts the `cleaker` role as a canonical public root.
+It is a **public domain** running a **monad.ai** that adopts the `cleaker` role as a canonical public root.
 
 That means:
 

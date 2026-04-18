@@ -1,10 +1,10 @@
 # Monad.ai
-Monad.ai is the daemon host for the `me://` runtime.
+The daemon host for the `me://` runtime.
 
 This package exposes:
 
 - ledger persistence
-- claim/open flows
+- claim namespace
 - namespace routing
 - semantic path resolution
 - remote exchange metadata for `me://` targets
