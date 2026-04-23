@@ -1,5 +1,4 @@
 # Monad.ai NPM — Daemon Runtime & Engine
-
 Monad.ai is the Node daemon package that exposes a universal ledger, semantic path resolution, and identity primitives over HTTP.
 
 This package currently hosts the **Monad daemon server**: the authoritative engine where namespaces, blocks, identities, and relations live.

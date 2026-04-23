@@ -1,13 +1,12 @@
 # monad.ai
-###### AlterEgo  `me://` 
-`me://[prefix.]constant:selector/path`
+###### Serve `me://` 
+### **Namespace**:
+
+`me://[prefix.]hostname[selector]:selector/path`
+
 **1 key = 1 subject = N monads.ai**
-**Namespace** binding host:
-`me://[prefix.]namespace[context]:selector/path`
 
-**Grammar:**
-
-**[prefix.]constant** = namespace
+**[prefix.]hostname** = namespace
 **selector** = intent/operation
 **path** = ruta semántica
 
