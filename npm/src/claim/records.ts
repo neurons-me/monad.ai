@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { db } from "../Blockchain/db";
-import { decryptNoise, deriveIdentityHash, deriveUnlockKey, encryptNoise } from "./derive";
+import { decryptNoise, deriveSecretCommitment, deriveUnlockKey, encryptNoise } from "./derive";
 import { buildPersistentClaimBundle, writePersistentClaimBundle } from "./manager";
 import { normalizeNamespaceIdentity, normalizeNamespaceRootName, parseNamespaceIdentityParts } from "../namespace/identity";
 import { appendSemanticMemory } from "./memoryStore";
@@ -17,6 +17,29 @@ import type {
 function normalizeNamespace(raw: string) {
   return normalizeNamespaceIdentity(raw);
 }
+
+function ensureClaimsSchema() {
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS claims (
+      namespace TEXT PRIMARY KEY,
+      identityHash TEXT NOT NULL,
+      secretCommitment TEXT NOT NULL DEFAULT '',
+      encryptedNoise TEXT NOT NULL,
+      publicKey TEXT,
+      createdAt INTEGER NOT NULL,
+      updatedAt INTEGER NOT NULL
+    );
+  `);
+
+  const info = db.prepare(`PRAGMA table_info(claims)`).all() as Array<{ name: string }>;
+  const hasSecretCommitment = info.some((column) => column.name === "secretCommitment");
+  if (!hasSecretCommitment) {
+    db.exec(`ALTER TABLE claims ADD COLUMN secretCommitment TEXT`);
+    db.exec(`UPDATE claims SET secretCommitment = '' WHERE secretCommitment IS NULL`);
+  }
+}
+
+ensureClaimsSchema();
 
 function materializeProjectedNamespaceClaim(namespace: string, timestamp: number) {
   const identity = parseNamespaceIdentityParts(namespace);
@@ -105,7 +128,7 @@ export function getClaim(namespace: string): ClaimRecord | undefined {
   return db
     .prepare(
       `
-      SELECT namespace, identityHash, encryptedNoise, publicKey, createdAt, updatedAt
+      SELECT namespace, identityHash, secretCommitment, encryptedNoise, publicKey, createdAt, updatedAt
       FROM claims
       WHERE namespace = ?
     `
@@ -116,17 +139,19 @@ export function getClaim(namespace: string): ClaimRecord | undefined {
 export function claimNamespace(input: NamespaceClaimInput): ClaimNamespaceResult {
   const namespace = normalizeNamespace(input.namespace);
   const secret = String(input.secret || "");
+  const identityHash = String(input.identityHash || "").trim();
   const publicKey = String(input.publicKey || "").trim() || null;
   const privateKey = String(input.privateKey || "").trim() || null;
 
   if (!namespace) return { ok: false, error: "NAMESPACE_REQUIRED" };
   if (!secret) return { ok: false, error: "SECRET_REQUIRED" };
+  if (!identityHash) return { ok: false, error: "IDENTITY_HASH_REQUIRED" };
 
   const exists = getClaim(namespace);
   if (exists) return { ok: false, error: "NAMESPACE_TAKEN" };
 
   const noise = crypto.randomBytes(32).toString("hex");
-  const identityHash = deriveIdentityHash(namespace, secret);
+  const secretCommitment = deriveSecretCommitment(namespace, secret);
   const unlockKey = deriveUnlockKey(namespace, secret);
   const encryptedNoise = encryptNoise(noise, unlockKey);
   const now = Date.now();
@@ -143,12 +168,13 @@ export function claimNamespace(input: NamespaceClaimInput): ClaimNamespaceResult
 
     db.prepare(
       `
-      INSERT INTO claims (namespace, identityHash, encryptedNoise, publicKey, createdAt, updatedAt)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO claims (namespace, identityHash, secretCommitment, encryptedNoise, publicKey, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `
     ).run(
       namespace,
       identityHash,
+      secretCommitment,
       encryptedNoise,
       bundle.summary.claim.publicKey.key,
       now,
@@ -183,6 +209,7 @@ export function claimNamespace(input: NamespaceClaimInput): ClaimNamespaceResult
       ({
         namespace,
         identityHash,
+        secretCommitment,
         encryptedNoise,
         publicKey: persistentClaim.claim.publicKey.key,
         createdAt: now,
@@ -194,15 +221,21 @@ export function claimNamespace(input: NamespaceClaimInput): ClaimNamespaceResult
 export function openNamespace(input: NamespaceOpenInput): OpenNamespaceResult {
   const namespace = normalizeNamespace(input.namespace);
   const secret = String(input.secret || "");
+  const identityHash = String(input.identityHash || "").trim();
 
   if (!namespace) return { ok: false, error: "NAMESPACE_REQUIRED" };
   if (!secret) return { ok: false, error: "SECRET_REQUIRED" };
+  if (!identityHash) return { ok: false, error: "IDENTITY_HASH_REQUIRED" };
 
   const record = getClaim(namespace);
   if (!record) return { ok: false, error: "CLAIM_NOT_FOUND" };
 
-  const identityHash = deriveIdentityHash(namespace, secret);
   if (identityHash !== record.identityHash) {
+    return { ok: false, error: "IDENTITY_MISMATCH" };
+  }
+
+  const secretCommitment = deriveSecretCommitment(namespace, secret);
+  if (!record.secretCommitment || secretCommitment !== record.secretCommitment) {
     return { ok: false, error: "CLAIM_VERIFICATION_FAILED" };
   }
 

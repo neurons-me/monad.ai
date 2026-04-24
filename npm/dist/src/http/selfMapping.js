@@ -9,9 +9,34 @@ exports.loadSelfNodeConfig = loadSelfNodeConfig;
 exports.resolveSelfDispatch = resolveSelfDispatch;
 const fs_1 = __importDefault(require("fs"));
 const path_1 = __importDefault(require("path"));
+const crypto_1 = __importDefault(require("crypto"));
 const identity_1 = require("../namespace/identity");
 function normalizeNamespace(input) {
     return (0, identity_1.normalizeNamespaceIdentity)(input);
+}
+function generateSelfIdentity() {
+    return `monad-${crypto_1.default.randomBytes(4).toString("hex")}.local`;
+}
+function ensureSelfIdentityConfig(input) {
+    const explicitIdentity = normalizeNamespace(input.env.MONAD_SELF_IDENTITY || input.fileConfig.identity);
+    if (explicitIdentity)
+        return input.fileConfig;
+    const generated = {
+        ...input.fileConfig,
+        identity: generateSelfIdentity(),
+        endpoint: String(input.env.MONAD_SELF_ENDPOINT || input.fileConfig.endpoint || `http://localhost:${input.port}`).trim(),
+        hostname: String(input.fileConfig.hostname || input.hostname || "").trim() || String(input.hostname || ""),
+        tags: Array.isArray(input.fileConfig.tags) && input.fileConfig.tags.length > 0
+            ? input.fileConfig.tags
+            : ["local", "primary"],
+        type: input.fileConfig.type || "desktop",
+        trust: input.fileConfig.trust || "owner",
+    };
+    fs_1.default.mkdirSync(path_1.default.dirname(input.configPath), { recursive: true });
+    fs_1.default.writeFileSync(input.configPath, `${JSON.stringify(generated, null, 2)}\n`, "utf8");
+    input.env.MONAD_SELF_IDENTITY = String(generated.identity || "");
+    input.env.MONAD_SELF_ENDPOINT = String(generated.endpoint || "");
+    return generated;
 }
 function normalizeToken(input) {
     return String(input || "")
@@ -259,6 +284,13 @@ function loadSelfNodeConfig(input) {
             fileConfig = {};
         }
     }
+    fileConfig = ensureSelfIdentityConfig({
+        configPath,
+        env: input.env,
+        hostname: input.hostname,
+        port: input.port,
+        fileConfig,
+    });
     const identity = normalizeNamespace(input.env.MONAD_SELF_IDENTITY || fileConfig.identity);
     if (!identity)
         return null;
@@ -279,6 +311,8 @@ function loadSelfNodeConfig(input) {
         ...toArray(input.env.MONAD_SELF_RESOURCES),
     ]);
     const capacity = normalizeSurfaceCapacity(fileConfig.capacity);
+    input.env.MONAD_SELF_IDENTITY = identity;
+    input.env.MONAD_SELF_ENDPOINT = endpoint;
     return {
         identity,
         tags,

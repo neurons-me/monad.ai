@@ -58,7 +58,6 @@ const PORT = process.env.PORT || 8161;
 const NODE_HOSTNAME = os.hostname();
 const NODE_DISPLAY_NAME = `${NODE_HOSTNAME}:${PORT}`;
 const FETCH_PROXY_TIMEOUT_MS = Number(process.env.MONAD_FETCH_TIMEOUT_MS || 15000);
-const LOCAL_NAMESPACE_ROOT = normalizeNamespaceIdentity("localhost");
 const ME_PKG_DIST_DIR = process.env.ME_PKG_DIST_DIR
   ? path.resolve(process.env.ME_PKG_DIST_DIR)
   : path.resolve(process.cwd(), "../../../this/.me/npm/dist");
@@ -80,6 +79,9 @@ const SELF_NODE_CONFIG = loadSelfNodeConfig({
   hostname: NODE_HOSTNAME,
   port: PORT,
 });
+const LOCAL_NAMESPACE_ROOT = normalizeNamespaceIdentity(
+  SELF_NODE_CONFIG?.identity || "localhost",
+);
 const app = express();
 app.set("trust proxy", true);
 app.use(cors());
@@ -795,6 +797,7 @@ app.post("/me/*", async (req: express.Request, res: express.Response) => {
     const out = claimNamespace({
       namespace,
       secret: String(body.secret || ""),
+      identityHash: String(body.identityHash || "").trim(),
       publicKey: String(body.publicKey || "").trim() || null,
       privateKey: String(body.privateKey || "").trim() || null,
     });
@@ -805,6 +808,7 @@ app.post("/me/*", async (req: express.Request, res: express.Response) => {
           ? 409
           : out.error === "NAMESPACE_REQUIRED"
               || out.error === "SECRET_REQUIRED"
+              || out.error === "IDENTITY_HASH_REQUIRED"
               || out.error === "CLAIM_KEY_INVALID"
               || out.error === "CLAIM_KEYPAIR_MISMATCH"
             ? 400
@@ -824,15 +828,18 @@ app.post("/me/*", async (req: express.Request, res: express.Response) => {
   const out = openNamespace({
     namespace,
     secret: String(body.secret || ""),
+    identityHash: String(body.identityHash || "").trim(),
   });
 
   if (!out.ok) {
     const status =
       out.error === "CLAIM_NOT_FOUND"
         ? 404
-        : out.error === "CLAIM_VERIFICATION_FAILED"
+        : out.error === "CLAIM_VERIFICATION_FAILED" || out.error === "IDENTITY_MISMATCH"
           ? 403
-          : out.error === "NAMESPACE_REQUIRED" || out.error === "SECRET_REQUIRED"
+          : out.error === "NAMESPACE_REQUIRED"
+              || out.error === "SECRET_REQUIRED"
+              || out.error === "IDENTITY_HASH_REQUIRED"
             ? 400
             : 500;
     return res.status(status).json(createErrorEnvelope(target, { error: out.error }));
@@ -947,6 +954,7 @@ app.post("/", async (req: express.Request, res: express.Response) => {
     const out = claimNamespace({
       namespace: resolvedNamespace,
       secret: String((body as any)?.secret || ""),
+      identityHash: String((body as any)?.identityHash || "").trim(),
       publicKey: String((body as any)?.publicKey || "").trim() || null,
       privateKey: String((body as any)?.privateKey || "").trim() || null,
     });
@@ -958,6 +966,7 @@ app.post("/", async (req: express.Request, res: express.Response) => {
           ? 409
           : out.error === "NAMESPACE_REQUIRED"
               || out.error === "SECRET_REQUIRED"
+              || out.error === "IDENTITY_HASH_REQUIRED"
               || out.error === "CLAIM_KEY_INVALID"
               || out.error === "CLAIM_KEYPAIR_MISMATCH"
             ? 400
@@ -985,6 +994,7 @@ app.post("/", async (req: express.Request, res: express.Response) => {
     const out = openNamespace({
       namespace: resolvedNamespace,
       secret: String((body as any)?.secret || ""),
+      identityHash: String((body as any)?.identityHash || "").trim(),
     });
 
     const openTarget = commandTarget || buildNormalizedTarget(req, resolvedNamespace, "open", "");
@@ -992,9 +1002,11 @@ app.post("/", async (req: express.Request, res: express.Response) => {
       const status =
         out.error === "CLAIM_NOT_FOUND"
           ? 404
-          : out.error === "CLAIM_VERIFICATION_FAILED"
+          : out.error === "CLAIM_VERIFICATION_FAILED" || out.error === "IDENTITY_MISMATCH"
             ? 403
-            : out.error === "NAMESPACE_REQUIRED" || out.error === "SECRET_REQUIRED"
+            : out.error === "NAMESPACE_REQUIRED"
+                || out.error === "SECRET_REQUIRED"
+                || out.error === "IDENTITY_HASH_REQUIRED"
               ? 400
               : 500;
       return res.status(status).json(createErrorEnvelope(openTarget, { error: out.error }));
@@ -1275,7 +1287,7 @@ app.listen(PORT, () => {
   console.log("  - Examples:");
   console.log("    • cleaker.me                  -> cleaker.me");
   console.log("    • username.cleaker.me         -> username.cleaker.me");
-  console.log(`    • localhost (alias)           -> ${LOCAL_NAMESPACE_ROOT}`);
+  console.log(`    • localhost (transport alias) -> ${LOCAL_NAMESPACE_ROOT}`);
   console.log(`    • username.localhost          -> username.${LOCAL_NAMESPACE_ROOT} (local alias projection)`);
   console.log("    • cleaker.me/@username        -> username.cleaker.me (path projection)");
   console.log(`    • localhost/@username         -> username.${LOCAL_NAMESPACE_ROOT} (local alias projection)`);

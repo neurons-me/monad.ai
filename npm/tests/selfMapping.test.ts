@@ -1,5 +1,9 @@
+import fs from "fs";
+import os from "os";
+import path from "path";
 import {
   buildSelfSurfaceEntry,
+  loadSelfNodeConfig,
   parseSelectorGroups,
   resolveSelfDispatch,
   type SelfNodeConfig,
@@ -85,5 +89,41 @@ describe("self mapping", () => {
       endpoint: "http://localhost:8161",
       rootName: "cleaker.me",
     });
+  });
+
+  it("autogenerates and persists a daemon identity when none is configured", () => {
+    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), "monad-self-"));
+    const env: NodeJS.ProcessEnv = {};
+
+    try {
+      const loaded = loadSelfNodeConfig({
+        cwd,
+        env,
+        hostname: "Suis-MacBook-Air.local",
+        port: 8161,
+      });
+
+      expect(loaded).not.toBeNull();
+      expect(loaded?.identity).toMatch(/^monad-[a-f0-9]{8}\.local$/);
+      expect(loaded?.endpoint).toBe("http://localhost:8161");
+      expect(loaded?.configPath).toBe(path.join(cwd, "env/self.json"));
+      expect(env.MONAD_SELF_IDENTITY).toBe(loaded?.identity);
+      expect(fs.existsSync(path.join(cwd, "env/self.json"))).toBe(true);
+
+      const persisted = JSON.parse(
+        fs.readFileSync(path.join(cwd, "env/self.json"), "utf8"),
+      ) as { identity?: string };
+      expect(persisted.identity).toBe(loaded?.identity);
+
+      const reloaded = loadSelfNodeConfig({
+        cwd,
+        env: {},
+        hostname: "Suis-MacBook-Air.local",
+        port: 8161,
+      });
+      expect(reloaded?.identity).toBe(loaded?.identity);
+    } finally {
+      fs.rmSync(cwd, { recursive: true, force: true });
+    }
   });
 });

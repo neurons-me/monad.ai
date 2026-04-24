@@ -1,0 +1,11 @@
+{
+  "identity": "monad-9f094393.local",
+  "endpoint": "http://localhost:8161",
+  "hostname": "Suis-MacBook-Air.local",
+  "tags": [
+    "local",
+    "primary"
+  ],
+  "type": "desktop",
+  "trust": "owner"
+}

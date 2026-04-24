@@ -13,6 +13,10 @@ function uniqueNamespace() {
   return `claim-${Date.now()}-${crypto.randomBytes(4).toString("hex")}.cleaker.me`;
 }
 
+function uniqueIdentityHash() {
+  return crypto.randomBytes(32).toString("hex");
+}
+
 describe("persistent claims", () => {
   const originalClaimDir = process.env.MONAD_CLAIM_DIR;
   let claimDir = "";
@@ -37,6 +41,7 @@ describe("persistent claims", () => {
     const out = claimNamespace({
       namespace,
       secret: "luna",
+      identityHash: uniqueIdentityHash(),
     });
 
     expect(out.ok).toBe(true);
@@ -48,10 +53,18 @@ describe("persistent claims", () => {
     expect(out.persistentClaim.claim.proofKey.key).toBe(out.record.publicKey);
     expect(verifyPersistentClaim(namespace)).toBe(true);
 
-    const opened = openNamespace({ namespace, secret: "luna" });
+    const opened = openNamespace({
+      namespace,
+      secret: "luna",
+      identityHash: out.record.identityHash,
+    });
     expect(opened.ok).toBe(true);
 
-    const rejected = openNamespace({ namespace, secret: "sol" });
+    const rejected = openNamespace({
+      namespace,
+      secret: "sol",
+      identityHash: out.record.identityHash,
+    });
     expect(rejected).toEqual({
       ok: false,
       error: "CLAIM_VERIFICATION_FAILED",
@@ -68,6 +81,7 @@ describe("persistent claims", () => {
     const out = claimNamespace({
       namespace,
       secret: "sol",
+      identityHash: uniqueIdentityHash(),
       publicKey: supplied,
     });
 
@@ -90,6 +104,7 @@ describe("persistent claims", () => {
     const out = claimNamespace({
       namespace,
       secret: "estrella",
+      identityHash: uniqueIdentityHash(),
       publicKey: a.publicKey.export({ type: "spki", format: "pem" }).toString(),
       privateKey: b.privateKey.export({ type: "pkcs8", format: "pem" }).toString(),
     });

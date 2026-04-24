@@ -1,6 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
+import crypto from "crypto";
 import { claimNamespace } from "../src/claim/records";
 import { seedClaimNamespaceSemantics } from "../src/claim/claimSemantics";
 import { readOpenedClaimProfile } from "../src/http/claims";
@@ -31,6 +32,7 @@ describe("claims open profile hydration", () => {
     const claimed = claimNamespace({
       namespace,
       secret: "secret-123",
+      identityHash: crypto.randomBytes(32).toString("hex"),
     });
 
     expect(claimed.ok).toBe(true);

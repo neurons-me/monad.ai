@@ -11,6 +11,10 @@ function uniqueUsername(prefix: string) {
   return `${prefix}-${Date.now()}-${crypto.randomBytes(3).toString("hex")}`;
 }
 
+function uniqueIdentityHash() {
+  return crypto.randomBytes(32).toString("hex");
+}
+
 test("projects claimed users from the root namespace", () => {
   const root = "localhost:8161";
   const localRoot = normalizeNamespaceRootName(root);
@@ -20,8 +24,16 @@ test("projects claimed users from the root namespace", () => {
   const namespaceB = composeProjectedNamespace(usernameB, root);
 
   try {
-    const claimA = claimNamespace({ namespace: namespaceA, secret: "orwell1984" });
-    const claimB = claimNamespace({ namespace: namespaceB, secret: "animalfarm" });
+    const claimA = claimNamespace({
+      namespace: namespaceA,
+      secret: "orwell1984",
+      identityHash: uniqueIdentityHash(),
+    });
+    const claimB = claimNamespace({
+      namespace: namespaceB,
+      secret: "animalfarm",
+      identityHash: uniqueIdentityHash(),
+    });
 
     assert.equal(claimA.ok, true, "first projected namespace should claim successfully");
     assert.equal(claimB.ok, true, "second projected namespace should claim successfully");

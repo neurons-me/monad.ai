@@ -16,6 +16,26 @@ const memoryStore_1 = require("./memoryStore");
 function normalizeNamespace(raw) {
     return (0, identity_1.normalizeNamespaceIdentity)(raw);
 }
+function ensureClaimsSchema() {
+    db_1.db.exec(`
+    CREATE TABLE IF NOT EXISTS claims (
+      namespace TEXT PRIMARY KEY,
+      identityHash TEXT NOT NULL,
+      secretCommitment TEXT NOT NULL DEFAULT '',
+      encryptedNoise TEXT NOT NULL,
+      publicKey TEXT,
+      createdAt INTEGER NOT NULL,
+      updatedAt INTEGER NOT NULL
+    );
+  `);
+    const info = db_1.db.prepare(`PRAGMA table_info(claims)`).all();
+    const hasSecretCommitment = info.some((column) => column.name === "secretCommitment");
+    if (!hasSecretCommitment) {
+        db_1.db.exec(`ALTER TABLE claims ADD COLUMN secretCommitment TEXT`);
+        db_1.db.exec(`UPDATE claims SET secretCommitment = '' WHERE secretCommitment IS NULL`);
+    }
+}
+ensureClaimsSchema();
 function materializeProjectedNamespaceClaim(namespace, timestamp) {
     const identity = (0, identity_1.parseNamespaceIdentityParts)(namespace);
     const hostNamespace = (0, identity_1.normalizeNamespaceRootName)(identity.host);
@@ -92,7 +112,7 @@ function getClaim(namespace) {
         return undefined;
     return db_1.db
         .prepare(`
-      SELECT namespace, identityHash, encryptedNoise, publicKey, createdAt, updatedAt
+      SELECT namespace, identityHash, secretCommitment, encryptedNoise, publicKey, createdAt, updatedAt
       FROM claims
       WHERE namespace = ?
     `)
@@ -101,17 +121,20 @@ function getClaim(namespace) {
 function claimNamespace(input) {
     const namespace = normalizeNamespace(input.namespace);
     const secret = String(input.secret || "");
+    const identityHash = String(input.identityHash || "").trim();
     const publicKey = String(input.publicKey || "").trim() || null;
     const privateKey = String(input.privateKey || "").trim() || null;
     if (!namespace)
         return { ok: false, error: "NAMESPACE_REQUIRED" };
     if (!secret)
         return { ok: false, error: "SECRET_REQUIRED" };
+    if (!identityHash)
+        return { ok: false, error: "IDENTITY_HASH_REQUIRED" };
     const exists = getClaim(namespace);
     if (exists)
         return { ok: false, error: "NAMESPACE_TAKEN" };
     const noise = crypto_1.default.randomBytes(32).toString("hex");
-    const identityHash = (0, derive_1.deriveIdentityHash)(namespace, secret);
+    const secretCommitment = (0, derive_1.deriveSecretCommitment)(namespace, secret);
     const unlockKey = (0, derive_1.deriveUnlockKey)(namespace, secret);
     const encryptedNoise = (0, derive_1.encryptNoise)(noise, unlockKey);
     const now = Date.now();
@@ -125,9 +148,9 @@ function claimNamespace(input) {
             issuedAt: now,
         });
         db_1.db.prepare(`
-      INSERT INTO claims (namespace, identityHash, encryptedNoise, publicKey, createdAt, updatedAt)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(namespace, identityHash, encryptedNoise, bundle.summary.claim.publicKey.key, now, now);
+      INSERT INTO claims (namespace, identityHash, secretCommitment, encryptedNoise, publicKey, createdAt, updatedAt)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(namespace, identityHash, secretCommitment, encryptedNoise, bundle.summary.claim.publicKey.key, now, now);
         persistentClaim = (0, manager_1.writePersistentClaimBundle)(bundle);
         materializeProjectedNamespaceClaim(namespace, now);
     }
@@ -155,6 +178,7 @@ function claimNamespace(input) {
             {
                 namespace,
                 identityHash,
+                secretCommitment,
                 encryptedNoise,
                 publicKey: persistentClaim.claim.publicKey.key,
                 createdAt: now,
@@ -165,15 +189,21 @@ function claimNamespace(input) {
 function openNamespace(input) {
     const namespace = normalizeNamespace(input.namespace);
     const secret = String(input.secret || "");
+    const identityHash = String(input.identityHash || "").trim();
     if (!namespace)
         return { ok: false, error: "NAMESPACE_REQUIRED" };
     if (!secret)
         return { ok: false, error: "SECRET_REQUIRED" };
+    if (!identityHash)
+        return { ok: false, error: "IDENTITY_HASH_REQUIRED" };
     const record = getClaim(namespace);
     if (!record)
         return { ok: false, error: "CLAIM_NOT_FOUND" };
-    const identityHash = (0, derive_1.deriveIdentityHash)(namespace, secret);
     if (identityHash !== record.identityHash) {
+        return { ok: false, error: "IDENTITY_MISMATCH" };
+    }
+    const secretCommitment = (0, derive_1.deriveSecretCommitment)(namespace, secret);
+    if (!record.secretCommitment || secretCommitment !== record.secretCommitment) {
         return { ok: false, error: "CLAIM_VERIFICATION_FAILED" };
     }
     try {

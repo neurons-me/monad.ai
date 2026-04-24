@@ -1,16 +1,14 @@
 "use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
 Object.defineProperty(exports, "__esModule", { value: true });
+exports.DEFAULT_LOCAL_NAMESPACE_ROOT = void 0;
 exports.normalizeNamespaceIdentity = normalizeNamespaceIdentity;
 exports.normalizeNamespaceConstant = normalizeNamespaceConstant;
 exports.normalizeNamespaceRootName = normalizeNamespaceRootName;
 exports.isProjectableNamespaceRoot = isProjectableNamespaceRoot;
 exports.composeProjectedNamespace = composeProjectedNamespace;
 exports.parseNamespaceIdentityParts = parseNamespaceIdentityParts;
-const os_1 = __importDefault(require("os"));
 const cleaker_1 = require("cleaker");
+exports.DEFAULT_LOCAL_NAMESPACE_ROOT = "monad.local";
 function normalizeRawNamespace(input) {
     return String(input || "").trim().toLowerCase();
 }
@@ -44,14 +42,14 @@ function tryParseNamespace(raw) {
     }
 }
 function resolveLocalNamespaceRoot() {
-    const configured = normalizeRawNamespace(process.env.MONAD_SELF_IDENTITY || "");
+    const configured = normalizeRawNamespace(process.env.MONAD_LOCAL_ALIAS_ROOT || process.env.MONAD_SELF_IDENTITY || "");
     if (configured) {
         const parsed = tryParseNamespace(configured);
         const constant = stripPort(parsed?.constant || configured);
         if (constant)
             return constant;
     }
-    return stripPort(os_1.default.hostname()) || "localhost";
+    return exports.DEFAULT_LOCAL_NAMESPACE_ROOT;
 }
 function canonicalizeNamespaceConstant(input) {
     const constant = stripPort(String(input || ""));

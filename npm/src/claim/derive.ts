@@ -4,11 +4,11 @@ export function deriveUnlockKey(namespace: string, secret: string): Buffer {
   return crypto.scryptSync(secret, namespace, 32);
 }
 
-export function deriveIdentityHash(namespace: string, secret: string): string {
+export function deriveSecretCommitment(namespace: string, secret: string): string {
   const unlockKey = deriveUnlockKey(namespace, secret);
   return crypto
     .createHmac("sha256", unlockKey)
-    .update(`${namespace}:claim_proof`)
+    .update(`${namespace}:secret_commitment`)
     .digest("hex");
 }
 

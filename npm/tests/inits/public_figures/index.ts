@@ -1,4 +1,5 @@
 import { PUBLIC_FIGURES, PUBLIC_FIGURES_PASSWORD, type PublicFigureSeed } from "./data.ts";
+import { createHash } from "crypto";
 import { pathToFileURL } from "url";
 
 const MONAD_ORIGIN = String(process.env.MONAD_ORIGIN || process.env.MONAD_API_ORIGIN || "http://localhost:8161").replace(/\/+$/, "");
@@ -36,6 +37,10 @@ function stableStringify(value: unknown): string {
   const record = value as Record<string, unknown>;
   const keys = Object.keys(record).sort();
   return `{${keys.map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`).join(",")}}`;
+}
+
+function buildKernelIdentityHash(namespace: string): string {
+  return createHash("sha256").update(`public-figures:${normalizeNamespace(namespace)}`).digest("hex");
 }
 
 function normalizeSlashPath(path: string): string {
@@ -173,6 +178,7 @@ async function ensureClaim(figure: PublicFigureSeed, namespace: string): Promise
     email: `${figure.username}@public-figures.${parseNamespaceRoot(namespace)}`,
     phone: `550000${String(PUBLIC_FIGURES.indexOf(figure) + 1).padStart(4, "0")}`,
     secret: PUBLIC_FIGURES_PASSWORD,
+    identityHash: buildKernelIdentityHash(namespace),
   };
 
   if (DRY_RUN) {

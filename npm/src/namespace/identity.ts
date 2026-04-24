@@ -1,4 +1,3 @@
-import os from "os";
 import { composeNamespace, parseNamespaceExpression } from "cleaker";
 
 export interface NamespaceIdentityParts {
@@ -6,6 +5,8 @@ export interface NamespaceIdentityParts {
   username: string;
   effective: string;
 }
+
+export const DEFAULT_LOCAL_NAMESPACE_ROOT = "monad.local";
 
 function normalizeRawNamespace(input: unknown): string {
   return String(input || "").trim().toLowerCase();
@@ -44,14 +45,16 @@ function tryParseNamespace(raw: string) {
 }
 
 function resolveLocalNamespaceRoot(): string {
-  const configured = normalizeRawNamespace(process.env.MONAD_SELF_IDENTITY || "");
+  const configured = normalizeRawNamespace(
+    process.env.MONAD_LOCAL_ALIAS_ROOT || process.env.MONAD_SELF_IDENTITY || "",
+  );
   if (configured) {
     const parsed = tryParseNamespace(configured);
     const constant = stripPort(parsed?.constant || configured);
     if (constant) return constant;
   }
 
-  return stripPort(os.hostname()) || "localhost";
+  return DEFAULT_LOCAL_NAMESPACE_ROOT;
 }
 
 function canonicalizeNamespaceConstant(input: unknown): string {

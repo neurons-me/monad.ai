@@ -10,6 +10,8 @@
 **selector** = intent/operation
 **path** = ruta semántica
 
+El claim ahora está anclado al identity hash del kernel en lugar de derivarlo de `namespace + secret`.
+
 ---
 
 ```.me

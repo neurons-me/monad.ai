@@ -1,6 +1,7 @@
 export type NamespaceClaimInput = {
   namespace: string;
   secret: string;
+  identityHash: string;
   publicKey?: string | null;
   privateKey?: string | null;
 };
@@ -8,11 +9,13 @@ export type NamespaceClaimInput = {
 export type NamespaceOpenInput = {
   namespace: string;
   secret: string;
+  identityHash: string;
 };
 
 export type ClaimRecord = {
   namespace: string;
   identityHash: string;
+  secretCommitment: string;
   encryptedNoise: string;
   publicKey?: string | null;
   createdAt: number;
@@ -57,6 +60,7 @@ export type ClaimNamespaceResult =
       error:
         | "NAMESPACE_REQUIRED"
         | "SECRET_REQUIRED"
+        | "IDENTITY_HASH_REQUIRED"
         | "NAMESPACE_TAKEN"
         | "CLAIM_KEY_INVALID"
         | "CLAIM_KEYPAIR_MISMATCH"
@@ -70,7 +74,9 @@ export type OpenNamespaceResult =
       error:
         | "NAMESPACE_REQUIRED"
         | "SECRET_REQUIRED"
+        | "IDENTITY_HASH_REQUIRED"
         | "CLAIM_NOT_FOUND"
+        | "IDENTITY_MISMATCH"
         | "CLAIM_VERIFICATION_FAILED"
         | "NOISE_DECRYPT_FAILED";
     };

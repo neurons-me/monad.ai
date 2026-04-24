@@ -1,6 +1,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
+import crypto from "crypto";
 import { claimNamespace } from "../src/claim/records";
 import { seedClaimNamespaceSemantics } from "../src/claim/claimSemantics";
 import { db } from "../src/Blockchain/db";
@@ -28,7 +29,11 @@ describe("claim semantic seeds", () => {
   it("seeds keys and polls.studio categories for a claimed namespace", async () => {
     const username = `polls${Date.now().toString(36)}`;
     const namespace = `${username}.cleaker.me`;
-    const claim = claimNamespace({ namespace, secret: "luna" });
+    const claim = claimNamespace({
+      namespace,
+      secret: "luna",
+      identityHash: crypto.randomBytes(32).toString("hex"),
+    });
     expect(claim.ok).toBe(true);
     if (!claim.ok) return;
 

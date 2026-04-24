@@ -93,6 +93,19 @@ describe("observer relation routing", () => {
     });
   });
 
+  it("resolves direct daemon hostnames without going through localhost aliasing", () => {
+    const req = makeRequest({
+      host: "ana.monad-7f3a.local:8161",
+      path: "/profile/name",
+    });
+
+    expect(resolveNamespace(req)).toBe("ana.monad-7f3a.local");
+
+    const target = normalizeHttpRequestToMeTarget(req);
+    expect(target.namespace).toBe("ana.monad-7f3a.local");
+    expect(target.nrp).toBe("me://ana.monad-7f3a.local:read/profile.name");
+  });
+
   it("preserves legacy named views as a non-identity relation", () => {
     const req = makeRequest({
       host: "ana.cleaker.me",

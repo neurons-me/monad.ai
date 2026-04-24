@@ -4,18 +4,18 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 };
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.deriveUnlockKey = deriveUnlockKey;
-exports.deriveIdentityHash = deriveIdentityHash;
+exports.deriveSecretCommitment = deriveSecretCommitment;
 exports.encryptNoise = encryptNoise;
 exports.decryptNoise = decryptNoise;
 const crypto_1 = __importDefault(require("crypto"));
 function deriveUnlockKey(namespace, secret) {
     return crypto_1.default.scryptSync(secret, namespace, 32);
 }
-function deriveIdentityHash(namespace, secret) {
+function deriveSecretCommitment(namespace, secret) {
     const unlockKey = deriveUnlockKey(namespace, secret);
     return crypto_1.default
         .createHmac("sha256", unlockKey)
-        .update(`${namespace}:claim_proof`)
+        .update(`${namespace}:secret_commitment`)
         .digest("hex");
 }
 function encryptNoise(noise, unlockKey) {

@@ -124,6 +124,7 @@ export function createClaimsRouter() {
     const out = claimNamespace({
       namespace,
       secret: String(body.secret || ""),
+      identityHash: String(body.identityHash || "").trim(),
       publicKey: String(body.publicKey || "").trim() || null,
       privateKey: String(body.privateKey || "").trim() || null,
     });
@@ -134,6 +135,7 @@ export function createClaimsRouter() {
           ? 409
           : out.error === "NAMESPACE_REQUIRED"
               || out.error === "SECRET_REQUIRED"
+              || out.error === "IDENTITY_HASH_REQUIRED"
               || out.error === "CLAIM_KEY_INVALID"
               || out.error === "CLAIM_KEYPAIR_MISMATCH"
             ? 400
@@ -173,15 +175,18 @@ export function createClaimsRouter() {
     const out = openNamespace({
       namespace: String(body.namespace || ""),
       secret: String(body.secret || ""),
+      identityHash: String(body.identityHash || "").trim(),
     });
 
     if (!out.ok) {
       const status =
         out.error === "CLAIM_NOT_FOUND"
           ? 404
-          : out.error === "CLAIM_VERIFICATION_FAILED"
+          : out.error === "CLAIM_VERIFICATION_FAILED" || out.error === "IDENTITY_MISMATCH"
             ? 403
-          : out.error === "NAMESPACE_REQUIRED" || out.error === "SECRET_REQUIRED"
+          : out.error === "NAMESPACE_REQUIRED"
+              || out.error === "SECRET_REQUIRED"
+              || out.error === "IDENTITY_HASH_REQUIRED"
               ? 400
               : 500;
       return res.status(status).json(createErrorEnvelope(target, { error: out.error }));
