@@ -2,15 +2,24 @@
 ###### Serve `me://` 
 ### **Namespace**:
 
-`me://[prefix.]hostname[selector]:selector/path`
+Canonical resource grammar:
+
+`me://namespace[selector]/path`
+
+Implementation-specific daemon command surface:
+
+`me://namespace:operation/path`
 
 **1 key = 1 subject = N monads.ai**
 
-**[prefix.]hostname** = namespace
-**selector** = intent/operation
-**path** = ruta semántica
+**namespace** = canonical resource namespace
+**selector** = canonical NRP selector when using the resource grammar
+**operation** = daemon/kernel command intent when using the command surface
+**path** = semantic route or command target
 
 El claim ahora está anclado al identity hash del kernel en lugar de derivarlo de `namespace + secret`.
+
+The recommended canonical resource form is the one specified by the [Namespace Resolution Protocol](../../docs/en/Namespace%20Resolution%20Protocol.md). Command-style `me://namespace:operation/path` targets remain part of the current daemon implementation surface, but they do not replace the canonical NRP grammar.
 
 ---
 
@@ -39,7 +48,7 @@ me://wikileaks[host:wikileaks.org|protocol:https]:read/page
 
 ---
 
-So now the **namespace resolution protocol** reads cleanly:
+So now the current **daemon command surface** reads cleanly:
 
 `me://self:read/profile`
 `me://self:write/profile.name`
