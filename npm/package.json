@@ -1,6 +1,6 @@
 {
   "name": "monad.ai",
-  "version": "1.0.1",
+  "version": "2.1.1",
   "description": "Monad daemon for identity, ledger, and semantic runtime surfaces.",
   "author": "suiGn",
   "license": "ISC",

@@ -1,6 +1,6 @@
-# Namespace Resolution Protocol v0.1
-**neurons.me  /  suiGn **
-**Status:** Draft — Working Document
+# Namespace Resolution Protocol v0.1.1
+**neurons.me / suiGn**
+**Status:** First Stable Working Document
 **License:** CC0 1.0 Universal — Public Domain
 
 ---
@@ -8,9 +8,9 @@
 ## Preamble
 This document specifies the **Namespace Resolution Protocol (NRP)** for the `me://` URI scheme.
 
-The **NRP** defines how a `me://` URI is resolved *from a symbolic address into a concrete semantic value*, across a **distributed mesh** of surfaces — without a central registry, without a central server, and without requiring persistent connectivity.
+The NRP defines how a `me://` URI is resolved from a symbolic address into a concrete semantic value, across a distributed mesh of surfaces — without a central registry, without a central server, and without requiring persistent connectivity.
 
-It is the *protocol* that closes the gap between:
+It is the protocol that closes the gap between:
 
 - **Semantic resolution** — already implemented in `this.me`: local, mathematical, derivation-based. The kernel resolves `me.get("wallet.balance")` entirely offline.
 
@@ -26,7 +26,7 @@ me://jabellae.cleaker.me[surface:iphone]/wallet.balance
      namespace)            surface)           path locally)
 ```
 
-The **NRP** specifies the topological layer. The semantic layer is already specified by `this.me`.
+The NRP specifies the topological layer. The semantic layer is already specified by `this.me`.
 
 ---
 
@@ -418,7 +418,7 @@ These are the invariants that any implementation must preserve. They are not imp
 
 ## Appendix A — Formal Grammar (ABNF, from URI scheme v1)
 
-```txt
+```abnf
 me-uri       = "me://" [ namespace ] [ selector ] [ "/" path ]
 
 namespace    = 1*( ALPHA / DIGIT / "." / "_" / "-" )
@@ -430,14 +430,54 @@ path         = *( VCHAR / "/" )
 
 The `secret:key@namespace` prefix for authenticated access is parsed as:
 
-```txt
+```abnf
 me-uri-auth  = "me://" "secret:" secret-key "@" namespace [ selector ] [ "/" path ]
 secret-key   = 1*( ALPHA / DIGIT / "-" / "_" )
 ```
 
 ---
 
-## Appendix B — Open Questions for v0.2
+## Appendix B — Current HTTP Binding (Compatibility Layer)
+
+The canonical resource grammar remains the one defined in this document:
+
+```text
+me://namespace[selector]/path
+```
+
+The current `monad.ai` server already supports a primary HTTP binding in which the namespace is resolved from the `Host` header and the daemon remains local/offline-first as a transport surface.
+
+### Primary HTTP binding
+
+- `GET /<path>` with `Host: <namespace>` — read from the namespace resolved from `Host`
+- `POST /` with `Host: <namespace>` and `{"operation":"write", "expression":"...", "value":..., "identityHash":"..."}` — write into the namespace resolved from `Host`
+- `POST /` with `Host: <namespace>` and `{"operation":"claim"|"open", "secret":"...", "identityHash":"..."}` — perform claim/open against the namespace resolved from `Host`
+
+In this binding, the transport endpoint may still be local, such as `http://localhost:8161`, while the semantic namespace is selected through `Host`. This is consistent with a local/offline-first daemon acting as the material surface for a semantic namespace.
+
+### Current implementation notes
+
+- Read uses the path in the URL, while write currently uses the `expression` field in the request body. These refer to the same semantic selector, but they are serialized differently in each direction in the current implementation.
+- Write authorization on a claimed namespace is enforced. In the current implementation, a write is accepted when the request body `identityHash` matches the stored claim identity hash, or when the request carries a valid signature verifiable against the claim's stored public key.
+- Claim/open is currently anchored to an `identityHash`, while `secret` acts as an unlock key for reopening the namespace state.
+
+### Deprecated / compatibility surfaces
+
+The current server implementation may also expose overlapping compatibility routes in addition to the primary binding. In particular, the current `monad.ai` server exposes:
+
+- `POST /claims` — a profile-oriented claim bootstrap endpoint. In the current implementation it expects `namespace`, `secret`, `identityHash`, and profile fields such as `username`, `name`, `email`, and `phone`.
+- `POST /claims/open` — an HTTP endpoint for reopening a claimed namespace and recovering its state. In the current implementation it expects `namespace`, `secret`, and `identityHash`.
+- `POST /me/kernel:claim/<namespace>` and `POST /me/kernel:open/<namespace>` — bridge routes that expose kernel command targets over HTTP.
+
+These routes are part of the current implementation surface and compatibility layer. They do not redefine the canonical `me://` resource grammar described by the NRP, and they should not be treated as the primary expression of the protocol.
+
+These bindings also only partially overlap. They may validate different request bodies, return different status codes, or expose different behavior during bootstrap and testing. They should not be treated as equivalent transport expressions of the protocol.
+
+A future transport binding document may replace or consolidate these routes, but any such wire-level evolution must preserve the canonical resource identity described here.
+
+---
+
+## Appendix C — Open Questions for v0.2
 
 These are the questions this document intentionally leaves open, in priority order:
 
