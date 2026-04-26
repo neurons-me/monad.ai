@@ -112,7 +112,7 @@ function validateClaimProfile(body: Record<string, unknown>, namespace: string) 
 export function createClaimsRouter() {
   const router = express.Router();
 
-  router.post("/claims", (req: express.Request, res: express.Response) => {
+  router.post("/claims", async (req: express.Request, res: express.Response) => {
     const target = normalizeHttpRequestToMeTarget(req);
     const body = req.body ?? {};
     const namespace = String(body.namespace || "");
@@ -121,12 +121,13 @@ export function createClaimsRouter() {
       return res.status(400).json(createErrorEnvelope(target, { error: profile.error }));
     }
 
-    const out = claimNamespace({
+    const out = await claimNamespace({
       namespace,
       secret: String(body.secret || ""),
       identityHash: String(body.identityHash || "").trim(),
       publicKey: String(body.publicKey || "").trim() || null,
       privateKey: String(body.privateKey || "").trim() || null,
+      proof: (body.proof && typeof body.proof === "object") ? body.proof : null,
     });
 
     if (!out.ok) {
@@ -138,7 +139,12 @@ export function createClaimsRouter() {
               || out.error === "IDENTITY_HASH_REQUIRED"
               || out.error === "CLAIM_KEY_INVALID"
               || out.error === "CLAIM_KEYPAIR_MISMATCH"
+              || out.error === "PROOF_MESSAGE_INVALID"
+              || out.error === "PROOF_NAMESPACE_MISMATCH"
+              || out.error === "PROOF_TIMESTAMP_INVALID"
             ? 400
+            : out.error === "PROOF_INVALID"
+              ? 403
             : 500;
       return res.status(status).json(createErrorEnvelope(target, { error: out.error }));
     }

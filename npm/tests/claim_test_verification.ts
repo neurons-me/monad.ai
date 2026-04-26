@@ -20,12 +20,12 @@ function fail(label: string, error: unknown): never {
   throw error instanceof Error ? error : new Error(String(error));
 }
 
-function testVerified() {
+async function testVerified() {
   const namespace = uniqueNamespace();
   const secret = "luna";
   const identityHash = uniqueIdentityHash();
 
-  const claim = claimNamespace({ namespace, secret, identityHash });
+  const claim = await claimNamespace({ namespace, secret, identityHash });
   assert.equal(claim.ok, true, "claim should succeed for a fresh namespace");
   if (!claim.ok) {
     throw new Error(`claim failed with ${claim.error}`);
@@ -42,7 +42,7 @@ function testVerified() {
   assert.equal(opened.noise, claim.noise, "opening must recover the original noise");
 }
 
-function testClaimMaterializesRootUserPointer() {
+async function testClaimMaterializesRootUserPointer() {
   const namespace = uniqueNamespace();
   const secret = "luna";
   const identityHash = uniqueIdentityHash();
@@ -53,7 +53,7 @@ function testClaimMaterializesRootUserPointer() {
     limit: 20,
   }).length;
 
-  const claim = claimNamespace({ namespace, secret, identityHash });
+  const claim = await claimNamespace({ namespace, secret, identityHash });
   assert.equal(claim.ok, true, "claim should succeed for a projected namespace");
   if (!claim.ok) {
     throw new Error(`claim failed with ${claim.error}`);
@@ -84,12 +84,12 @@ function testClaimMaterializesRootUserPointer() {
   assert.equal(afterOpen.length, afterClaimCount, "open should not materialize root pointers again");
 }
 
-function testFailed() {
+async function testFailed() {
   const namespace = uniqueNamespace();
   const secret = "luna";
   const identityHash = uniqueIdentityHash();
 
-  const claim = claimNamespace({ namespace, secret, identityHash });
+  const claim = await claimNamespace({ namespace, secret, identityHash });
   assert.equal(claim.ok, true, "claim should succeed for a fresh namespace");
   if (!claim.ok) {
     throw new Error(`claim failed with ${claim.error}`);
@@ -104,12 +104,12 @@ function testFailed() {
   assert.equal(opened.error, "CLAIM_VERIFICATION_FAILED");
 }
 
-function testWrongIdentity() {
+async function testWrongIdentity() {
   const namespace = uniqueNamespace();
   const secret = "luna";
   const identityHash = uniqueIdentityHash();
 
-  const claim = claimNamespace({ namespace, secret, identityHash });
+  const claim = await claimNamespace({ namespace, secret, identityHash });
   assert.equal(claim.ok, true, "claim should succeed for a fresh namespace");
   if (!claim.ok) {
     throw new Error(`claim failed with ${claim.error}`);
@@ -128,20 +128,22 @@ function testWrongIdentity() {
   assert.equal(opened.error, "IDENTITY_MISMATCH");
 }
 
-try {
-  testVerified();
+async function main() {
+  await testVerified();
   pass("claim_test_verification.verified");
 
-  testClaimMaterializesRootUserPointer();
+  await testClaimMaterializesRootUserPointer();
   pass("claim_test_verification.root_pointer");
 
-  testFailed();
+  await testFailed();
   pass("claim_test_verification.failed");
 
-  testWrongIdentity();
+  await testWrongIdentity();
   pass("claim_test_verification.identity_mismatch");
 
   console.log("All claim verification tests passed.");
-} catch (error) {
-  fail("claim_test_verification", error);
 }
+
+main().catch((error) => {
+  fail("claim_test_verification", error);
+});

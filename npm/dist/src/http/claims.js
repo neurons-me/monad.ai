@@ -106,7 +106,7 @@ function validateClaimProfile(body, namespace) {
 }
 function createClaimsRouter() {
     const router = express_1.default.Router();
-    router.post("/claims", (req, res) => {
+    router.post("/claims", async (req, res) => {
         const target = (0, meTarget_1.normalizeHttpRequestToMeTarget)(req);
         const body = req.body ?? {};
         const namespace = String(body.namespace || "");
@@ -114,12 +114,13 @@ function createClaimsRouter() {
         if (!profile.ok) {
             return res.status(400).json((0, envelope_1.createErrorEnvelope)(target, { error: profile.error }));
         }
-        const out = (0, records_1.claimNamespace)({
+        const out = await (0, records_1.claimNamespace)({
             namespace,
             secret: String(body.secret || ""),
             identityHash: String(body.identityHash || "").trim(),
             publicKey: String(body.publicKey || "").trim() || null,
             privateKey: String(body.privateKey || "").trim() || null,
+            proof: (body.proof && typeof body.proof === "object") ? body.proof : null,
         });
         if (!out.ok) {
             const status = out.error === "NAMESPACE_TAKEN"
@@ -129,8 +130,13 @@ function createClaimsRouter() {
                     || out.error === "IDENTITY_HASH_REQUIRED"
                     || out.error === "CLAIM_KEY_INVALID"
                     || out.error === "CLAIM_KEYPAIR_MISMATCH"
+                    || out.error === "PROOF_MESSAGE_INVALID"
+                    || out.error === "PROOF_NAMESPACE_MISMATCH"
+                    || out.error === "PROOF_TIMESTAMP_INVALID"
                     ? 400
-                    : 500;
+                    : out.error === "PROOF_INVALID"
+                        ? 403
+                        : 500;
             return res.status(status).json((0, envelope_1.createErrorEnvelope)(target, { error: out.error }));
         }
         const timestamp = Date.now();

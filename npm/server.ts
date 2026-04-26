@@ -1,6 +1,8 @@
 import express from "express";
 import cors from "cors";
 import os from "os";
+import { getKernel } from "./src/kernel/manager.js";
+import { setupPersistence } from "./src/kernel/persist.js";
 import path from "path";
 import { createHash } from "crypto";
 import { db, DB_PATH } from "./src/Blockchain/db";
@@ -794,12 +796,13 @@ app.post("/me/*", async (req: express.Request, res: express.Response) => {
   }
 
   if (operation === "claim") {
-    const out = claimNamespace({
+    const out = await claimNamespace({
       namespace,
       secret: String(body.secret || ""),
       identityHash: String(body.identityHash || "").trim(),
       publicKey: String(body.publicKey || "").trim() || null,
       privateKey: String(body.privateKey || "").trim() || null,
+      proof: (body.proof && typeof body.proof === "object") ? body.proof as any : null,
     });
 
     if (!out.ok) {
@@ -811,7 +814,12 @@ app.post("/me/*", async (req: express.Request, res: express.Response) => {
               || out.error === "IDENTITY_HASH_REQUIRED"
               || out.error === "CLAIM_KEY_INVALID"
               || out.error === "CLAIM_KEYPAIR_MISMATCH"
+              || out.error === "PROOF_MESSAGE_INVALID"
+              || out.error === "PROOF_NAMESPACE_MISMATCH"
+              || out.error === "PROOF_TIMESTAMP_INVALID"
             ? 400
+            : out.error === "PROOF_INVALID"
+              ? 403
             : 500;
       return res.status(status).json(createErrorEnvelope(target, { error: out.error }));
     }
@@ -951,12 +959,15 @@ app.post("/", async (req: express.Request, res: express.Response) => {
       }));
     }
 
-    const out = claimNamespace({
+    const out = await claimNamespace({
       namespace: resolvedNamespace,
       secret: String((body as any)?.secret || ""),
       identityHash: String((body as any)?.identityHash || "").trim(),
       publicKey: String((body as any)?.publicKey || "").trim() || null,
       privateKey: String((body as any)?.privateKey || "").trim() || null,
+      proof: ((body as any)?.proof && typeof (body as any).proof === "object")
+        ? (body as any).proof
+        : null,
     });
 
     const claimTarget = commandTarget || buildNormalizedTarget(req, resolvedNamespace, "claim", "");
@@ -969,7 +980,12 @@ app.post("/", async (req: express.Request, res: express.Response) => {
               || out.error === "IDENTITY_HASH_REQUIRED"
               || out.error === "CLAIM_KEY_INVALID"
               || out.error === "CLAIM_KEYPAIR_MISMATCH"
+              || out.error === "PROOF_MESSAGE_INVALID"
+              || out.error === "PROOF_NAMESPACE_MISMATCH"
+              || out.error === "PROOF_TIMESTAMP_INVALID"
             ? 400
+            : out.error === "PROOF_INVALID"
+              ? 403
             : 500;
       return res.status(status).json(createErrorEnvelope(claimTarget, { error: out.error }));
     }
@@ -1265,6 +1281,9 @@ app.get("/*", (req, res, next) => {
   return createPathResolverHandler()(req, res);
 });
 // --- Start Server ----------------------------------------
+getKernel();
+setupPersistence();
+
 app.listen(PORT, () => {
   console.log(`\n🚀 Monad.ai daemon running at: http://localhost:${PORT}`);
   console.log("\n∴ Material Surface");

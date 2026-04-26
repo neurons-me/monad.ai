@@ -7,30 +7,32 @@ exports.recordMemory = recordMemory;
 exports.getMemoriesForNamespace = getMemoriesForNamespace;
 exports.isNamespaceWriteAuthorized = isNamespaceWriteAuthorized;
 const crypto_1 = __importDefault(require("crypto"));
-const db_1 = require("../Blockchain/db");
-const identity_1 = require("../namespace/identity");
-function normalizeNamespace(raw) {
-    return (0, identity_1.normalizeNamespaceIdentity)(raw);
+const manager_js_1 = require("../kernel/manager.js");
+const identity_js_1 = require("../namespace/identity.js");
+function nsKey(namespace) {
+    return namespace.replace(/\./g, "__");
 }
-function safeParseJson(raw) {
-    try {
-        return JSON.parse(raw);
-    }
-    catch {
-        return raw;
-    }
+function memPath(namespace) {
+    return `daemon.memories.${nsKey(namespace)}`;
+}
+function nav(root, path) {
+    return path.split(".").reduce((proxy, key) => proxy[key], root);
+}
+function kernelGet(path) {
+    const kernelRead = (0, manager_js_1.getKernel)();
+    return kernelRead(path);
+}
+function kernelSet(path, value) {
+    nav((0, manager_js_1.getKernel)(), path)(value);
 }
 function toStableJson(value) {
-    if (value === null || typeof value !== "object") {
+    if (value === null || typeof value !== "object")
         return JSON.stringify(value);
-    }
-    if (Array.isArray(value)) {
-        return `[${value.map((item) => toStableJson(item)).join(",")}]`;
-    }
+    if (Array.isArray(value))
+        return `[${value.map(toStableJson).join(",")}]`;
     const obj = value;
     const keys = Object.keys(obj).sort();
-    const entries = keys.map((key) => `${JSON.stringify(key)}:${toStableJson(obj[key])}`);
-    return `{${entries.join(",")}}`;
+    return `{${keys.map((k) => `${JSON.stringify(k)}:${toStableJson(obj[k])}`).join(",")}}`;
 }
 function decodeSignature(rawSignature) {
     const sig = String(rawSignature || "").trim();
@@ -40,7 +42,6 @@ function decodeSignature(rawSignature) {
         return Buffer.from(sig, "base64");
     }
     catch {
-        // Fallback for clients that send hex signatures.
         try {
             return Buffer.from(sig, "hex");
         }
@@ -70,47 +71,28 @@ function verifySignature(publicKey, message, signature) {
         return false;
     }
 }
-db_1.db.exec(`
-CREATE TABLE IF NOT EXISTS memories (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  namespace TEXT NOT NULL,
-  payload TEXT NOT NULL,
-  identityHash TEXT NOT NULL,
-  timestamp INTEGER NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_memories_namespace_ts
-ON memories(namespace, timestamp);
-`);
 function recordMemory(input) {
-    const namespace = normalizeNamespace(input.namespace);
+    const namespace = (0, identity_js_1.normalizeNamespaceIdentity)(input.namespace);
     if (!namespace)
         return;
-    const timestamp = Number(input.timestamp || Date.now());
-    const identityHash = String(input.identityHash || "").trim();
-    const payload = JSON.stringify(input.payload ?? null);
-    db_1.db.prepare(`
-      INSERT INTO memories (namespace, payload, identityHash, timestamp)
-      VALUES (?, ?, ?, ?)
-    `).run(namespace, payload, identityHash, timestamp);
+    const path = memPath(namespace);
+    const existing = kernelGet(path) ?? [];
+    const updated = [
+        ...existing,
+        {
+            payload: input.payload,
+            identityHash: String(input.identityHash || ""),
+            timestamp: Number(input.timestamp || Date.now()),
+        },
+    ];
+    kernelSet(path, updated);
 }
 function getMemoriesForNamespace(namespace) {
-    const ns = normalizeNamespace(namespace);
+    const ns = (0, identity_js_1.normalizeNamespaceIdentity)(namespace);
     if (!ns)
         return [];
-    const rows = db_1.db
-        .prepare(`
-      SELECT payload, identityHash, timestamp
-      FROM memories
-      WHERE namespace = ?
-      ORDER BY timestamp ASC, id ASC
-    `)
-        .all(ns);
-    return rows.map((row) => ({
-        payload: safeParseJson(String(row.payload || "")),
-        identityHash: String(row.identityHash || ""),
-        timestamp: Number(row.timestamp || 0),
-    }));
+    const memories = kernelGet(memPath(ns)) ?? [];
+    return [...memories].sort((a, b) => a.timestamp - b.timestamp);
 }
 function isNamespaceWriteAuthorized(input) {
     const claimIdentityHash = String(input.claimIdentityHash || "").trim();
@@ -121,14 +103,12 @@ function isNamespaceWriteAuthorized(input) {
         return false;
     const bodyRecord = body;
     const bodyIdentityHash = String(bodyRecord.identityHash || "").trim();
-    if (bodyIdentityHash && bodyIdentityHash === claimIdentityHash) {
+    if (bodyIdentityHash && bodyIdentityHash === claimIdentityHash)
         return true;
-    }
     const publicKey = String(input.claimPublicKey || "").trim();
     const rawSignature = String(bodyRecord.signature || "").trim();
-    if (!publicKey || !rawSignature) {
+    if (!publicKey || !rawSignature)
         return false;
-    }
     const signature = decodeSignature(rawSignature);
     if (!signature)
         return false;

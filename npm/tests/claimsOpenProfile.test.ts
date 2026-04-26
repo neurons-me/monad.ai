@@ -23,13 +23,13 @@ describe("claims open profile hydration", () => {
     fs.rmSync(claimDir, { recursive: true, force: true });
   });
 
-  it("reads profile fields and canonical claim timestamp from semantic state", () => {
+  it("reads profile fields and canonical claim timestamp from semantic state", async () => {
     const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const username = `maria${suffix}`.slice(0, 24);
     const namespace = `${username}.cleaker.me`;
     const timestamp = Date.now();
 
-    const claimed = claimNamespace({
+    const claimed = await claimNamespace({
       namespace,
       secret: "secret-123",
       identityHash: crypto.randomBytes(32).toString("hex"),

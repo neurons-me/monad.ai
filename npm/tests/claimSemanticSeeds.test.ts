@@ -29,7 +29,7 @@ describe("claim semantic seeds", () => {
   it("seeds keys and polls.studio categories for a claimed namespace", async () => {
     const username = `polls${Date.now().toString(36)}`;
     const namespace = `${username}.cleaker.me`;
-    const claim = claimNamespace({
+    const claim = await claimNamespace({
       namespace,
       secret: "luna",
       identityHash: crypto.randomBytes(32).toString("hex"),

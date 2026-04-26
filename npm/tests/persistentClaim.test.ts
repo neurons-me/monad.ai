@@ -36,9 +36,9 @@ describe("persistent claims", () => {
     fs.rmSync(claimDir, { recursive: true, force: true });
   });
 
-  it("creates a signed persistent claim and stores it on disk", () => {
+  it("creates a signed persistent claim and stores it on disk", async () => {
     const namespace = uniqueNamespace();
-    const out = claimNamespace({
+    const out = await claimNamespace({
       namespace,
       secret: "luna",
       identityHash: uniqueIdentityHash(),
@@ -71,14 +71,14 @@ describe("persistent claims", () => {
     });
   });
 
-  it("preserves an explicit namespace public key and still signs the passport locally", () => {
+  it("preserves an explicit namespace public key and still signs the passport locally", async () => {
     const namespace = uniqueNamespace();
     const supplied = crypto.generateKeyPairSync("ed25519").publicKey.export({
       type: "spki",
       format: "pem",
     }).toString();
 
-    const out = claimNamespace({
+    const out = await claimNamespace({
       namespace,
       secret: "sol",
       identityHash: uniqueIdentityHash(),
@@ -96,12 +96,12 @@ describe("persistent claims", () => {
     expect(verifyPersistentClaim(namespace)).toBe(true);
   });
 
-  it("rejects mismatched private/public key pairs", () => {
+  it("rejects mismatched private/public key pairs", async () => {
     const namespace = uniqueNamespace();
     const a = crypto.generateKeyPairSync("ed25519");
     const b = crypto.generateKeyPairSync("ed25519");
 
-    const out = claimNamespace({
+    const out = await claimNamespace({
       namespace,
       secret: "estrella",
       identityHash: uniqueIdentityHash(),

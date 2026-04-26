@@ -1,151 +1,211 @@
 import crypto from "crypto";
-import { db } from "../Blockchain/db";
-import { decryptNoise, deriveSecretCommitment, deriveUnlockKey, encryptNoise } from "./derive";
-import { buildPersistentClaimBundle, writePersistentClaimBundle } from "./manager";
-import { normalizeNamespaceIdentity, normalizeNamespaceRootName, parseNamespaceIdentityParts } from "../namespace/identity";
-import { appendSemanticMemory } from "./memoryStore";
-import type { SemanticMemoryRow } from "./memoryStore";
+import { normalizeProofMessage, verifyEd25519Signature } from "this.me";
+import { getKernel } from "../kernel/manager.js";
+import { saveSnapshot } from "../kernel/manager.js";
+import { decryptNoise, deriveSecretCommitment, deriveUnlockKey, encryptNoise } from "./derive.js";
+import { buildPersistentClaimBundle, writePersistentClaimBundle } from "./manager.js";
+import { normalizeNamespaceIdentity, normalizeNamespaceRootName, parseNamespaceIdentityParts } from "../namespace/identity.js";
+import { appendSemanticMemory } from "./memoryStore.js";
 import type {
   ClaimNamespaceResult,
   ClaimRecord,
+  NamespaceClaimProof,
   NamespaceClaimInput,
   NamespaceOpenInput,
   OpenNamespaceResult,
   PersistentClaimSummary,
-} from "./types";
+} from "./types.js";
+
+const CLAIM_PROOF_MAX_AGE_MS = 5 * 60 * 1000;
 
 function normalizeNamespace(raw: string) {
   return normalizeNamespaceIdentity(raw);
 }
 
-function ensureClaimsSchema() {
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS claims (
-      namespace TEXT PRIMARY KEY,
-      identityHash TEXT NOT NULL,
-      secretCommitment TEXT NOT NULL DEFAULT '',
-      encryptedNoise TEXT NOT NULL,
-      publicKey TEXT,
-      createdAt INTEGER NOT NULL,
-      updatedAt INTEGER NOT NULL
-    );
-  `);
+type ClaimProofPayload = {
+  identityHash: string;
+  expression: string;
+  namespace: string;
+  rootNamespace: string;
+  challenge: string | null;
+  timestamp: number;
+};
 
-  const info = db.prepare(`PRAGMA table_info(claims)`).all() as Array<{ name: string }>;
-  const hasSecretCommitment = info.some((column) => column.name === "secretCommitment");
-  if (!hasSecretCommitment) {
-    db.exec(`ALTER TABLE claims ADD COLUMN secretCommitment TEXT`);
-    db.exec(`UPDATE claims SET secretCommitment = '' WHERE secretCommitment IS NULL`);
+type ClaimIdentityResolutionError =
+  | "IDENTITY_HASH_REQUIRED"
+  | "PROOF_INVALID"
+  | "PROOF_MESSAGE_INVALID"
+  | "PROOF_NAMESPACE_MISMATCH"
+  | "PROOF_TIMESTAMP_INVALID";
+
+// Encode namespace for use as a kernel path segment (dots → __)
+function nsKey(namespace: string): string {
+  return namespace.replace(/\./g, "__");
+}
+
+function claimPath(namespace: string): string {
+  return `daemon.claims.${nsKey(namespace)}`;
+}
+
+// Navigate proxy chain by dot-path and return the leaf proxy
+function nav(root: any, path: string): any {
+  return path.split(".").reduce((proxy, key) => proxy[key], root);
+}
+
+function kernelGet(path: string): ClaimRecord | undefined {
+  const kernelRead = getKernel() as unknown as (rawPath: string) => unknown;
+  const result = kernelRead(path);
+  return result === undefined || result === null ? undefined : (result as ClaimRecord);
+}
+
+function kernelSet(path: string, value: unknown): void {
+  nav(getKernel(), path)(value);
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function parseClaimProofPayload(proof: NamespaceClaimProof): ClaimProofPayload | null {
+  const rawMessage = String(proof.message || "");
+  if (!rawMessage) return null;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawMessage);
+  } catch {
+    return null;
+  }
+
+  if (!isPlainObject(parsed)) return null;
+  const canonical = normalizeProofMessage(parsed);
+  if (canonical !== rawMessage) return null;
+
+  const identityHash = String(parsed.identityHash || "").trim();
+  const expression = String(parsed.expression || "").trim();
+  const namespace = normalizeNamespace(String(parsed.namespace || ""));
+  const rootNamespace = normalizeNamespaceRootName(String(parsed.rootNamespace || ""));
+  const challenge = parsed.challenge == null ? null : String(parsed.challenge);
+  const timestamp = Number(parsed.timestamp || 0);
+
+  if (!identityHash || !expression || !namespace || !rootNamespace || !Number.isFinite(timestamp) || timestamp <= 0) {
+    return null;
+  }
+
+  return {
+    identityHash,
+    expression,
+    namespace,
+    rootNamespace,
+    challenge,
+    timestamp,
+  };
+}
+
+function normalizeProofTimestamp(proof: NamespaceClaimProof, payload: ClaimProofPayload): number {
+  const direct = Number(proof.timestamp ?? 0);
+  if (Number.isFinite(direct) && direct > 0) return direct;
+  return payload.timestamp;
+}
+
+function enforceClaimProofWindow(timestamp: number): boolean {
+  return Math.abs(Date.now() - timestamp) <= CLAIM_PROOF_MAX_AGE_MS;
+}
+
+function rawEd25519PublicKeyToPem(rawPublicKey: string): string {
+  const raw = Buffer.from(String(rawPublicKey || "").replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(String(rawPublicKey || "").length / 4) * 4, "="), "base64");
+  if (raw.length !== 32) {
+    throw new Error("PROOF_INVALID");
+  }
+  const spkiPrefix = Buffer.from("302a300506032b6570032100", "hex");
+  const spkiDer = Buffer.concat([spkiPrefix, raw]);
+  const publicKey = crypto.createPublicKey({
+    key: spkiDer,
+    format: "der",
+    type: "spki",
+  });
+  return publicKey.export({ type: "spki", format: "pem" }).toString();
+}
+
+async function resolveClaimIdentity(input: NamespaceClaimInput): Promise<
+  | { ok: true; identityHash: string; publicKeyPem: string | null }
+  | { ok: false; error: ClaimIdentityResolutionError }
+> {
+  const proof = input.proof;
+  if (!proof) {
+    const identityHash = String(input.identityHash || "").trim();
+    if (!identityHash) return { ok: false, error: "IDENTITY_HASH_REQUIRED" };
+    return { ok: true, identityHash, publicKeyPem: String(input.publicKey || "").trim() || null };
+  }
+
+  const payload = parseClaimProofPayload(proof);
+  if (!payload) return { ok: false, error: "PROOF_MESSAGE_INVALID" };
+  if (payload.namespace !== normalizeNamespace(input.namespace)) {
+    return { ok: false, error: "PROOF_NAMESPACE_MISMATCH" };
+  }
+
+  const proofTimestamp = normalizeProofTimestamp(proof, payload);
+  if (!enforceClaimProofWindow(proofTimestamp)) {
+    return { ok: false, error: "PROOF_TIMESTAMP_INVALID" };
+  }
+
+  const verified = await verifyEd25519Signature(
+    String(proof.publicKey || ""),
+    proof.message,
+    String(proof.signature || ""),
+  );
+  if (!verified) return { ok: false, error: "PROOF_INVALID" };
+
+  try {
+    return {
+      ok: true,
+      identityHash: payload.identityHash,
+      publicKeyPem: rawEd25519PublicKeyToPem(String(proof.publicKey || "")),
+    };
+  } catch {
+    return { ok: false, error: "PROOF_INVALID" };
   }
 }
 
-ensureClaimsSchema();
-
-function materializeProjectedNamespaceClaim(namespace: string, timestamp: number) {
+function materializeProjectedNamespaceClaim(namespace: string, _timestamp: number) {
   const identity = parseNamespaceIdentityParts(namespace);
   const hostNamespace = normalizeNamespaceRootName(identity.host);
   const username = String(identity.username || "").trim().toLowerCase();
-  const projectedNamespace = normalizeNamespace(namespace);
 
-  if (!hostNamespace || !username || !projectedNamespace) return;
+  if (!hostNamespace || !username) return;
 
+  kernelSet(`daemon.users.${nsKey(hostNamespace)}.${username}`, { __ptr: namespace });
   appendSemanticMemory({
     namespace: hostNamespace,
     path: `users.${username}`,
     operator: "__",
-    data: { __ptr: projectedNamespace },
-    timestamp,
-  });
-}
-
-function listProjectedNamespacePointers(path: string): SemanticMemoryRow[] {
-  return db
-    .prepare(
-      `
-      SELECT id, namespace, path, operator, data, hash, prevHash, signature, timestamp
-      FROM semantic_memories
-      WHERE path = ?
-      ORDER BY id ASC
-    `,
-    )
-    .all(path) as SemanticMemoryRow[];
-}
-
-function hasProjectedNamespacePointer(rootNamespace: string, username: string, projectedNamespace: string): boolean {
-  const path = `users.${username}`;
-  const pointers = listProjectedNamespacePointers(path);
-  return pointers.some((pointer) => {
-    const pointerRoot = normalizeNamespaceRootName(pointer.namespace);
-    if (pointerRoot !== rootNamespace) return false;
-
-    try {
-      const payload = pointer.data as { __ptr?: string } | null;
-      return String(payload?.__ptr || "").trim().toLowerCase() === projectedNamespace;
-    } catch {
-      return false;
-    }
+    data: { __ptr: namespace },
+    timestamp: _timestamp,
   });
 }
 
 export function rebuildProjectedNamespaceClaims(): number {
-  const claims = db
-    .prepare(
-      `
-      SELECT namespace, createdAt
-      FROM claims
-      ORDER BY createdAt ASC
-    `,
-    )
-    .all() as Array<{ namespace: string; createdAt: number }>;
-
-  let inserted = 0;
-
-  for (const claim of claims) {
-    const projectedNamespace = normalizeNamespace(claim.namespace);
-    const identity = parseNamespaceIdentityParts(projectedNamespace);
-    const rootNamespace = normalizeNamespaceRootName(identity.host);
-    const username = String(identity.username || "").trim().toLowerCase();
-
-    if (!rootNamespace || !username || !projectedNamespace) continue;
-    if (hasProjectedNamespacePointer(rootNamespace, username, projectedNamespace)) continue;
-
-    appendSemanticMemory({
-      namespace: rootNamespace,
-      path: `users.${username}`,
-      operator: "__",
-      data: { __ptr: projectedNamespace },
-      timestamp: Number(claim.createdAt || Date.now()),
-    });
-    inserted += 1;
-  }
-
-  return inserted;
+  // Kernel state is always consistent — no rebuild needed
+  return 0;
 }
 
 export function getClaim(namespace: string): ClaimRecord | undefined {
   const ns = normalizeNamespace(namespace);
   if (!ns) return undefined;
-  return db
-    .prepare(
-      `
-      SELECT namespace, identityHash, secretCommitment, encryptedNoise, publicKey, createdAt, updatedAt
-      FROM claims
-      WHERE namespace = ?
-    `
-    )
-    .get(ns) as ClaimRecord | undefined;
+  return kernelGet(claimPath(ns));
 }
 
-export function claimNamespace(input: NamespaceClaimInput): ClaimNamespaceResult {
+export async function claimNamespace(input: NamespaceClaimInput): Promise<ClaimNamespaceResult> {
   const namespace = normalizeNamespace(input.namespace);
   const secret = String(input.secret || "");
-  const identityHash = String(input.identityHash || "").trim();
-  const publicKey = String(input.publicKey || "").trim() || null;
+  const resolved = await resolveClaimIdentity(input);
+  const identityHash = resolved.ok ? resolved.identityHash : "";
+  const publicKey = resolved.ok ? resolved.publicKeyPem : null;
   const privateKey = String(input.privateKey || "").trim() || null;
 
   if (!namespace) return { ok: false, error: "NAMESPACE_REQUIRED" };
   if (!secret) return { ok: false, error: "SECRET_REQUIRED" };
-  if (!identityHash) return { ok: false, error: "IDENTITY_HASH_REQUIRED" };
+  if (!resolved.ok) return { ok: false, error: resolved.error };
 
   const exists = getClaim(namespace);
   if (exists) return { ok: false, error: "NAMESPACE_TAKEN" };
@@ -166,56 +226,31 @@ export function claimNamespace(input: NamespaceClaimInput): ClaimNamespaceResult
       issuedAt: now,
     });
 
-    db.prepare(
-      `
-      INSERT INTO claims (namespace, identityHash, secretCommitment, encryptedNoise, publicKey, createdAt, updatedAt)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `
-    ).run(
+    const record: ClaimRecord = {
       namespace,
       identityHash,
       secretCommitment,
       encryptedNoise,
-      bundle.summary.claim.publicKey.key,
-      now,
-      now,
-    );
+      publicKey: bundle.summary.claim.publicKey.key,
+      createdAt: now,
+      updatedAt: now,
+    };
 
+    kernelSet(claimPath(namespace), record);
     persistentClaim = writePersistentClaimBundle(bundle);
     materializeProjectedNamespaceClaim(namespace, now);
+    saveSnapshot();
   } catch (error) {
-    try {
-      db.prepare(`DELETE FROM claims WHERE namespace = ?`).run(namespace);
-    } catch {
-    }
+    try { kernelSet(claimPath(namespace), undefined); } catch { }
 
     const code = error instanceof Error ? error.message : String(error);
-    if (code === "CLAIM_KEYPAIR_MISMATCH") {
-      return { ok: false, error: "CLAIM_KEYPAIR_MISMATCH" };
-    }
-    if (code === "CLAIM_KEY_INVALID") {
-      return { ok: false, error: "CLAIM_KEY_INVALID" };
-    }
+    if (code === "CLAIM_KEYPAIR_MISMATCH") return { ok: false, error: "CLAIM_KEYPAIR_MISMATCH" };
+    if (code === "CLAIM_KEY_INVALID") return { ok: false, error: "CLAIM_KEY_INVALID" };
     return { ok: false, error: "CLAIM_PERSIST_FAILED" };
   }
 
-  const record = getClaim(namespace);
-  return {
-    ok: true,
-    noise,
-    persistentClaim,
-    record:
-      record ||
-      ({
-        namespace,
-        identityHash,
-        secretCommitment,
-        encryptedNoise,
-        publicKey: persistentClaim.claim.publicKey.key,
-        createdAt: now,
-        updatedAt: now,
-      } satisfies ClaimRecord),
-  };
+  const record = getClaim(namespace)!;
+  return { ok: true, noise, persistentClaim, record };
 }
 
 export function openNamespace(input: NamespaceOpenInput): OpenNamespaceResult {
@@ -229,10 +264,7 @@ export function openNamespace(input: NamespaceOpenInput): OpenNamespaceResult {
 
   const record = getClaim(namespace);
   if (!record) return { ok: false, error: "CLAIM_NOT_FOUND" };
-
-  if (identityHash !== record.identityHash) {
-    return { ok: false, error: "IDENTITY_MISMATCH" };
-  }
+  if (identityHash !== record.identityHash) return { ok: false, error: "IDENTITY_MISMATCH" };
 
   const secretCommitment = deriveSecretCommitment(namespace, secret);
   if (!record.secretCommitment || secretCommitment !== record.secretCommitment) {

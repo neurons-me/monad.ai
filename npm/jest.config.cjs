@@ -6,5 +6,9 @@ module.exports = {
     "<rootDir>/tests/**/*.test.ts",
     "<rootDir>/tests/**/*.test.js"
   ],
+  moduleNameMapper: {
+    "^(\\.{1,2}/.+)\\.js$": "$1"
+  },
+  setupFiles: ["<rootDir>/tests/setup.ts"],
   verbose: true
 };

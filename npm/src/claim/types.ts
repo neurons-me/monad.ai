@@ -1,9 +1,17 @@
+export type NamespaceClaimProof = {
+  message: string;
+  signature: string;
+  publicKey: string;
+  timestamp?: number | null;
+};
+
 export type NamespaceClaimInput = {
   namespace: string;
   secret: string;
-  identityHash: string;
+  identityHash?: string;
   publicKey?: string | null;
   privateKey?: string | null;
+  proof?: NamespaceClaimProof | null;
 };
 
 export type NamespaceOpenInput = {
@@ -64,6 +72,10 @@ export type ClaimNamespaceResult =
         | "NAMESPACE_TAKEN"
         | "CLAIM_KEY_INVALID"
         | "CLAIM_KEYPAIR_MISMATCH"
+        | "PROOF_INVALID"
+        | "PROOF_MESSAGE_INVALID"
+        | "PROOF_NAMESPACE_MISMATCH"
+        | "PROOF_TIMESTAMP_INVALID"
         | "CLAIM_PERSIST_FAILED";
     };
 

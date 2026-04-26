@@ -463,7 +463,7 @@ export function appendSemanticMemory(input: {
 }): SemanticMemoryRow {
   const namespace = String(input.namespace || "").trim().toLowerCase();
   const path = String(input.path || "").trim();
-  const operator = input.operator ?? "=";
+  const operator = input.operator === undefined ? "=" : input.operator;
   const signature = input.signature ?? null;
   const timestamp = Number(input.timestamp || Date.now());
 

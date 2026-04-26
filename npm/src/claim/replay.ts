@@ -1,8 +1,12 @@
 import crypto from "crypto";
-import { db } from "../Blockchain/db";
-import { normalizeNamespaceIdentity } from "../namespace/identity";
+import type { Memory } from "this.me";
+import { appendSemanticMemory, listSemanticMemoriesByNamespace, type SemanticMemoryRow } from "./memoryStore.js";
+import { getKernel } from "../kernel/manager.js";
+import { normalizeNamespaceIdentity } from "../namespace/identity.js";
 
-export type ReplayMemory = {
+export type ReplayMemory = Memory;
+
+type LegacyReplayRecord = {
   payload: unknown;
   identityHash: string;
   timestamp: number;
@@ -21,57 +25,51 @@ type NamespaceWriteAuthInput = {
   body: unknown;
 };
 
-function normalizeNamespace(raw: string) {
-  return normalizeNamespaceIdentity(raw);
+function nsKey(namespace: string): string {
+  return namespace.replace(/\./g, "__");
 }
 
-function safeParseJson(raw: string): unknown {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return raw;
-  }
+function memPath(namespace: string): string {
+  return `daemon.memories.${nsKey(namespace)}`;
+}
+
+function nav(root: any, path: string): any {
+  return path.split(".").reduce((proxy, key) => proxy[key], root);
+}
+
+function kernelGet(path: string): unknown {
+  const kernelRead = getKernel() as unknown as (rawPath: string) => unknown;
+  return kernelRead(path);
+}
+
+function kernelSet(path: string, value: unknown): void {
+  nav(getKernel(), path)(value);
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function toStableJson(value: unknown): string {
-  if (value === null || typeof value !== "object") {
-    return JSON.stringify(value);
-  }
-
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => toStableJson(item)).join(",")}]`;
-  }
-
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(toStableJson).join(",")}]`;
   const obj = value as Record<string, unknown>;
   const keys = Object.keys(obj).sort();
-  const entries = keys.map((key) => `${JSON.stringify(key)}:${toStableJson(obj[key])}`);
-  return `{${entries.join(",")}}`;
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${toStableJson(obj[k])}`).join(",")}}`;
 }
 
 function decodeSignature(rawSignature: string): Buffer | null {
   const sig = String(rawSignature || "").trim();
   if (!sig) return null;
-
   try {
     return Buffer.from(sig, "base64");
   } catch {
-    // Fallback for clients that send hex signatures.
-    try {
-      return Buffer.from(sig, "hex");
-    } catch {
-      return null;
-    }
+    try { return Buffer.from(sig, "hex"); } catch { return null; }
   }
 }
 
 function stripWriteAuthFields(body: Record<string, unknown>) {
-  const {
-    signature,
-    signedPayload,
-    signatureEncoding,
-    signatureFormat,
-    ...rest
-  } = body;
+  const { signature, signedPayload, signatureEncoding, signatureFormat, ...rest } = body;
   return rest;
 }
 
@@ -80,11 +78,9 @@ function verifySignature(publicKey: string, message: string, signature: Buffer):
     const key = crypto.createPublicKey(publicKey);
     const keyType = key.asymmetricKeyType || "";
     const payload = Buffer.from(message);
-
     if (keyType === "ed25519" || keyType === "ed448") {
       return crypto.verify(null, payload, key, signature);
     }
-
     const verifier = crypto.createVerify("SHA256");
     verifier.update(payload);
     verifier.end();
@@ -94,55 +90,186 @@ function verifySignature(publicKey: string, message: string, signature: Buffer):
   }
 }
 
-db.exec(`
-CREATE TABLE IF NOT EXISTS memories (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  namespace TEXT NOT NULL,
-  payload TEXT NOT NULL,
-  identityHash TEXT NOT NULL,
-  timestamp INTEGER NOT NULL
-);
+function normalizeOperator(raw: unknown): string | null {
+  if (raw === null || raw === undefined) return null;
+  const normalized = String(raw).trim();
+  return normalized || null;
+}
 
-CREATE INDEX IF NOT EXISTS idx_memories_namespace_ts
-ON memories(namespace, timestamp);
-`);
+function toReplayHash(input: {
+  path: string;
+  operator: string | null;
+  expression: unknown;
+  value: unknown;
+  timestamp: number;
+}): string {
+  return crypto
+    .createHash("sha256")
+    .update(
+      toStableJson({
+        path: input.path,
+        operator: input.operator,
+        expression: input.expression,
+        value: input.value,
+        timestamp: input.timestamp,
+      }),
+    )
+    .digest("hex");
+}
 
-export function recordMemory(input: RecordMemoryInput) {
-  const namespace = normalizeNamespace(input.namespace);
+function normalizeMarkerValue(raw: unknown, markerKey: "__ptr" | "__id"): Record<string, unknown> {
+  if (isPlainObject(raw) && typeof raw[markerKey] === "string" && raw[markerKey]) {
+    return raw;
+  }
+  return { [markerKey]: String(raw || "") };
+}
+
+function materializeReplayMemory(path: string, operator: string | null, data: unknown, hash: string, prevHash: string, timestamp: number): ReplayMemory {
+  let expression = data;
+  let value = data;
+
+  if (operator === "__" || operator === "->") {
+    const ptr = normalizeMarkerValue(data, "__ptr");
+    expression = ptr;
+    value = ptr;
+  } else if (operator === "@") {
+    const identity = normalizeMarkerValue(data, "__id");
+    expression = identity;
+    value = identity;
+  } else if (operator === "_" || operator === "~") {
+    const masked = typeof data === "string" && data.trim() ? data : "***";
+    expression = masked;
+    value = masked;
+  }
+
+  return {
+    path,
+    operator,
+    expression,
+    value,
+    hash,
+    prevHash,
+    timestamp,
+  };
+}
+
+function semanticRowToReplayMemory(row: SemanticMemoryRow): ReplayMemory {
+  return materializeReplayMemory(
+    String(row.path || "").trim(),
+    normalizeOperator(row.operator),
+    row.data,
+    String(row.hash || ""),
+    String(row.prevHash || ""),
+    Number(row.timestamp || Date.now()),
+  );
+}
+
+function normalizeLegacyReplayMemory(input: unknown): ReplayMemory | null {
+  if (!isPlainObject(input)) return null;
+
+  const source = isPlainObject(input.payload) ? input.payload : input;
+  const path = String(
+    (typeof source.path === "string" && source.path) ||
+      (typeof input.expression === "string" && input.expression) ||
+      "",
+  ).trim();
+  if (!path) return null;
+
+  const operator = normalizeOperator(source.operator);
+  const hasExpression = Object.prototype.hasOwnProperty.call(source, "expression");
+  const hasValue = Object.prototype.hasOwnProperty.call(source, "value");
+  let expression = hasExpression ? source.expression : hasValue ? source.value : undefined;
+  let value = hasValue ? source.value : expression;
+
+  if (!hasExpression && Object.prototype.hasOwnProperty.call(input, "value")) {
+    expression = (input as Record<string, unknown>).value;
+    value = expression;
+  }
+
+  const timestamp = Number(source.timestamp ?? input.timestamp ?? Date.now());
+  const hash = String(source.hash || "").trim() || toReplayHash({
+    path,
+    operator,
+    expression,
+    value,
+    timestamp,
+  });
+  const prevHash = String(source.prevHash || "").trim();
+
+  return materializeReplayMemory(path, operator, value, hash, prevHash, timestamp);
+}
+
+function toSemanticReplayData(memory: ReplayMemory): unknown {
+  if (memory.operator === "__" || memory.operator === "->" || memory.operator === "@") {
+    return memory.value ?? memory.expression;
+  }
+  if (memory.operator === "=" || memory.operator === "?" || memory.operator === null) {
+    return memory.value;
+  }
+  if (memory.operator === "_" || memory.operator === "~") {
+    return memory.expression ?? memory.value ?? "***";
+  }
+  return memory.value ?? memory.expression;
+}
+
+function replayMemoryKey(memory: ReplayMemory): string {
+  return [
+    Number(memory.timestamp || 0),
+    String(memory.path || ""),
+    String(memory.operator ?? ""),
+    String(memory.hash || ""),
+  ].join(":");
+}
+
+function getLegacyMemoriesForNamespace(namespace: string): ReplayMemory[] {
+  const raw = (kernelGet(memPath(namespace)) as LegacyReplayRecord[] | null) ?? [];
+  return raw
+    .map((entry) => normalizeLegacyReplayMemory(entry))
+    .filter((entry): entry is ReplayMemory => Boolean(entry))
+    .sort((a, b) => a.timestamp - b.timestamp);
+}
+
+export function recordMemory(input: RecordMemoryInput): void {
+  const namespace = normalizeNamespaceIdentity(input.namespace);
   if (!namespace) return;
 
-  const timestamp = Number(input.timestamp || Date.now());
-  const identityHash = String(input.identityHash || "").trim();
-  const payload = JSON.stringify(input.payload ?? null);
+  const replay = normalizeLegacyReplayMemory(input.payload);
+  if (!replay) return;
 
-  db.prepare(
-    `
-      INSERT INTO memories (namespace, payload, identityHash, timestamp)
-      VALUES (?, ?, ?, ?)
-    `
-  ).run(namespace, payload, identityHash, timestamp);
+  appendSemanticMemory({
+    namespace,
+    path: replay.path,
+    operator: replay.operator,
+    data: toSemanticReplayData(replay),
+    timestamp: Number(input.timestamp || replay.timestamp || Date.now()),
+  });
 }
 
 export function getMemoriesForNamespace(namespace: string): ReplayMemory[] {
-  const ns = normalizeNamespace(namespace);
+  const ns = normalizeNamespaceIdentity(namespace);
   if (!ns) return [];
 
-  const rows = db
-    .prepare(
-      `
-      SELECT payload, identityHash, timestamp
-      FROM memories
-      WHERE namespace = ?
-      ORDER BY timestamp ASC, id ASC
-    `
-    )
-    .all(ns) as Array<{ payload: string; identityHash: string; timestamp: number }>;
+  const semanticMemories = listSemanticMemoriesByNamespace(ns, { limit: 10000 })
+    .map((row) => semanticRowToReplayMemory(row));
+  const legacyMemories = getLegacyMemoriesForNamespace(ns);
 
-  return rows.map((row) => ({
-    payload: safeParseJson(String(row.payload || "")),
-    identityHash: String(row.identityHash || ""),
-    timestamp: Number(row.timestamp || 0),
-  }));
+  if (!semanticMemories.length) {
+    return legacyMemories;
+  }
+
+  if (!legacyMemories.length) {
+    return semanticMemories.sort((a, b) => a.timestamp - b.timestamp);
+  }
+
+  const merged = new Map<string, ReplayMemory>();
+  for (const memory of [...semanticMemories, ...legacyMemories]) {
+    const key = replayMemoryKey(memory);
+    if (!merged.has(key)) {
+      merged.set(key, memory);
+    }
+  }
+
+  return [...merged.values()].sort((a, b) => a.timestamp - b.timestamp);
 }
 
 export function isNamespaceWriteAuthorized(input: NamespaceWriteAuthInput): boolean {
@@ -154,15 +281,11 @@ export function isNamespaceWriteAuthorized(input: NamespaceWriteAuthInput): bool
 
   const bodyRecord = body as Record<string, unknown>;
   const bodyIdentityHash = String(bodyRecord.identityHash || "").trim();
-  if (bodyIdentityHash && bodyIdentityHash === claimIdentityHash) {
-    return true;
-  }
+  if (bodyIdentityHash && bodyIdentityHash === claimIdentityHash) return true;
 
   const publicKey = String(input.claimPublicKey || "").trim();
   const rawSignature = String(bodyRecord.signature || "").trim();
-  if (!publicKey || !rawSignature) {
-    return false;
-  }
+  if (!publicKey || !rawSignature) return false;
 
   const signature = decodeSignature(rawSignature);
   if (!signature) return false;

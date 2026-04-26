@@ -6,6 +6,8 @@ Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const os_1 = __importDefault(require("os"));
+const manager_js_1 = require("./src/kernel/manager.js");
+const persist_js_1 = require("./src/kernel/persist.js");
 const path_1 = __importDefault(require("path"));
 const crypto_1 = require("crypto");
 const db_1 = require("./src/Blockchain/db");
@@ -673,12 +675,13 @@ app.post("/me/*", async (req, res) => {
         }));
     }
     if (operation === "claim") {
-        const out = (0, records_1.claimNamespace)({
+        const out = await (0, records_1.claimNamespace)({
             namespace,
             secret: String(body.secret || ""),
             identityHash: String(body.identityHash || "").trim(),
             publicKey: String(body.publicKey || "").trim() || null,
             privateKey: String(body.privateKey || "").trim() || null,
+            proof: (body.proof && typeof body.proof === "object") ? body.proof : null,
         });
         if (!out.ok) {
             const status = out.error === "NAMESPACE_TAKEN"
@@ -688,8 +691,13 @@ app.post("/me/*", async (req, res) => {
                     || out.error === "IDENTITY_HASH_REQUIRED"
                     || out.error === "CLAIM_KEY_INVALID"
                     || out.error === "CLAIM_KEYPAIR_MISMATCH"
+                    || out.error === "PROOF_MESSAGE_INVALID"
+                    || out.error === "PROOF_NAMESPACE_MISMATCH"
+                    || out.error === "PROOF_TIMESTAMP_INVALID"
                     ? 400
-                    : 500;
+                    : out.error === "PROOF_INVALID"
+                        ? 403
+                        : 500;
             return res.status(status).json((0, envelope_1.createErrorEnvelope)(target, { error: out.error }));
         }
         return res.status(201).json((0, envelope_1.createEnvelope)(target, {
@@ -811,12 +819,15 @@ app.post("/", async (req, res) => {
                 detail: "Public claims should use a full namespace such as username.cleaker.me.",
             }));
         }
-        const out = (0, records_1.claimNamespace)({
+        const out = await (0, records_1.claimNamespace)({
             namespace: resolvedNamespace,
             secret: String(body?.secret || ""),
             identityHash: String(body?.identityHash || "").trim(),
             publicKey: String(body?.publicKey || "").trim() || null,
             privateKey: String(body?.privateKey || "").trim() || null,
+            proof: (body?.proof && typeof body.proof === "object")
+                ? body.proof
+                : null,
         });
         const claimTarget = commandTarget || buildNormalizedTarget(req, resolvedNamespace, "claim", "");
         if (!out.ok) {
@@ -827,8 +838,13 @@ app.post("/", async (req, res) => {
                     || out.error === "IDENTITY_HASH_REQUIRED"
                     || out.error === "CLAIM_KEY_INVALID"
                     || out.error === "CLAIM_KEYPAIR_MISMATCH"
+                    || out.error === "PROOF_MESSAGE_INVALID"
+                    || out.error === "PROOF_NAMESPACE_MISMATCH"
+                    || out.error === "PROOF_TIMESTAMP_INVALID"
                     ? 400
-                    : 500;
+                    : out.error === "PROOF_INVALID"
+                        ? 403
+                        : 500;
             return res.status(status).json((0, envelope_1.createErrorEnvelope)(claimTarget, { error: out.error }));
         }
         return res.status(201).json((0, envelope_1.createEnvelope)(claimTarget, {
@@ -1087,6 +1103,8 @@ app.get("/*", (req, res, next) => {
     return (0, pathResolver_1.createPathResolverHandler)()(req, res);
 });
 // --- Start Server ----------------------------------------
+(0, manager_js_1.getKernel)();
+(0, persist_js_1.setupPersistence)();
 app.listen(PORT, () => {
     console.log(`\n🚀 Monad.ai daemon running at: http://localhost:${PORT}`);
     console.log("\n∴ Material Surface");

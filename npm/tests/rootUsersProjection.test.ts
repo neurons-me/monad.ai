@@ -15,7 +15,7 @@ function uniqueIdentityHash() {
   return crypto.randomBytes(32).toString("hex");
 }
 
-test("projects claimed users from the root namespace", () => {
+test("projects claimed users from the root namespace", async () => {
   const root = "localhost:8161";
   const localRoot = normalizeNamespaceRootName(root);
   const usernameA = uniqueUsername("nefasto");
@@ -24,12 +24,12 @@ test("projects claimed users from the root namespace", () => {
   const namespaceB = composeProjectedNamespace(usernameB, root);
 
   try {
-    const claimA = claimNamespace({
+    const claimA = await claimNamespace({
       namespace: namespaceA,
       secret: "orwell1984",
       identityHash: uniqueIdentityHash(),
     });
-    const claimB = claimNamespace({
+    const claimB = await claimNamespace({
       namespace: namespaceB,
       secret: "animalfarm",
       identityHash: uniqueIdentityHash(),
