@@ -2,7 +2,6 @@ import crypto from "crypto";
 import { claimNamespace } from "../src/claim/records";
 import { getMemoriesForNamespace, recordMemory } from "../src/claim/replay";
 import { seedClaimNamespaceSemantics } from "../src/claim/claimSemantics";
-import { db } from "../src/Blockchain/db";
 
 function uniqueNamespace() {
   return `replay-${Date.now()}-${crypto.randomBytes(4).toString("hex")}.cleaker.me`;
@@ -44,8 +43,6 @@ describe("canonical replay memories", () => {
         }),
       ]),
     );
-
-    db.prepare(`DELETE FROM semantic_memories WHERE namespace = ?`).run(namespace);
   });
 
   it("returns semantic claim seeds through the same replay surface", async () => {
@@ -88,8 +85,5 @@ describe("canonical replay memories", () => {
         }),
       ]),
     );
-
-    db.prepare(`DELETE FROM semantic_memories WHERE namespace = ?`).run(namespace);
-    db.prepare(`DELETE FROM semantic_memories WHERE namespace = ? AND path = ?`).run("cleaker.me", `users.${username}`);
   });
 });

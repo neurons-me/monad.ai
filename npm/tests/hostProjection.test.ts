@@ -1,6 +1,5 @@
 import assert from "assert";
 import crypto from "crypto";
-import { db } from "../src/Blockchain/db";
 import {
   appendSemanticMemory,
   getHostStatus,
@@ -12,19 +11,12 @@ function uniqueUsername() {
   return `host-${Date.now()}-${crypto.randomBytes(3).toString("hex")}`;
 }
 
-function cleanupNamespace(namespace: string) {
-  db.prepare(`DELETE FROM semantic_memories WHERE namespace = ?`).run(namespace);
-  db.prepare(`DELETE FROM authorized_hosts WHERE namespace = ?`).run(namespace);
-}
-
 test("projects relative host memories inside the user namespace", () => {
   const username = uniqueUsername();
   const namespace = `${username}.cleaker.me`;
   const hostKey = "suis-macbook-air";
   const fingerprint = `fp-${crypto.randomBytes(6).toString("hex")}`;
   const timestamp = Date.now();
-
-  cleanupNamespace(namespace);
 
   appendSemanticMemory({
     namespace,
@@ -106,6 +98,4 @@ test("projects relative host memories inside the user namespace", () => {
     history.every((memory) => memory.namespace === namespace),
     "history should remain scoped to the user namespace",
   );
-
-  cleanupNamespace(namespace);
 });

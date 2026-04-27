@@ -1,6 +1,7 @@
 import crypto from "crypto";
-import { db } from "../Blockchain/db";
 import { normalizeNamespaceRootName } from "../namespace/identity";
+import { getKernel, kernelPathFor, namespaceToKernelPrefix, getRootNamespace } from "../kernel/manager";
+import type { Memory } from "this.me";
 
 export interface SemanticMemoryRow {
   id: number;
@@ -39,418 +40,123 @@ export interface AuthorizedHostRow {
   revoked_at: number | null;
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
+// ─── session nonces (ephemeral, in-memory) ───────────────────────────────────
 
-type HostField =
-  | "fingerprint"
-  | "status"
-  | "capabilities"
-  | "last_seen"
-  | "local_endpoint"
-  | "public_key"
-  | "label"
-  | "hostname"
-  | "attestation";
+interface NonceRecord { nonce: string; iat: number; exp: number }
+const _nonces = new Map<string, NonceRecord>();
 
-db.exec(`
-CREATE TABLE IF NOT EXISTS semantic_memories (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  namespace TEXT NOT NULL,
-  path TEXT NOT NULL,
-  operator TEXT,
-  data TEXT NOT NULL,
-  hash TEXT NOT NULL,
-  prevHash TEXT NOT NULL,
-  signature TEXT,
-  timestamp INTEGER NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_semantic_memories_namespace_id
-ON semantic_memories(namespace, id);
-
-CREATE INDEX IF NOT EXISTS idx_semantic_memories_path_id
-ON semantic_memories(path, id);
-
-CREATE TABLE IF NOT EXISTS session_nonces (
-  username TEXT PRIMARY KEY,
-  nonce TEXT NOT NULL,
-  iat INTEGER NOT NULL,
-  exp INTEGER NOT NULL
-);
-
-CREATE INDEX IF NOT EXISTS idx_session_nonces_exp
-ON session_nonces(exp);
-
-CREATE TABLE IF NOT EXISTS authorized_hosts (
-  id TEXT PRIMARY KEY,
-  namespace TEXT NOT NULL,
-  username TEXT NOT NULL,
-  host_key TEXT NOT NULL,
-  fingerprint TEXT NOT NULL,
-  public_key TEXT NOT NULL,
-  hostname TEXT NOT NULL,
-  label TEXT NOT NULL,
-  local_endpoint TEXT NOT NULL,
-  attestation TEXT NOT NULL,
-  capabilities_json TEXT NOT NULL,
-  status TEXT NOT NULL,
-  created_at INTEGER NOT NULL,
-  last_used INTEGER NOT NULL,
-  revoked_at INTEGER,
-  UNIQUE(namespace, username, host_key)
-);
-
-CREATE INDEX IF NOT EXISTS idx_authorized_hosts_status
-ON authorized_hosts(status);
-`);
-
-function hasAuthorizedHostColumn(name: string): boolean {
-  const rows = db.prepare(`PRAGMA table_info(authorized_hosts)`).all() as Array<{ name: string }>;
-  return rows.some((row) => String(row.name || "").trim().toLowerCase() === String(name || "").trim().toLowerCase());
-}
-
-function migrateAuthorizedHostsSchema(): void {
-  const hasNamespace = hasAuthorizedHostColumn("namespace");
-  const hasHostKey = hasAuthorizedHostColumn("host_key");
-  const hasHostname = hasAuthorizedHostColumn("hostname");
-  if (hasNamespace && hasHostKey && hasHostname) return;
-
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS authorized_hosts_v2 (
-      id TEXT PRIMARY KEY,
-      namespace TEXT NOT NULL,
-      username TEXT NOT NULL,
-      host_key TEXT NOT NULL,
-      fingerprint TEXT NOT NULL,
-      public_key TEXT NOT NULL,
-      hostname TEXT NOT NULL,
-      label TEXT NOT NULL,
-      local_endpoint TEXT NOT NULL,
-      attestation TEXT NOT NULL,
-      capabilities_json TEXT NOT NULL,
-      status TEXT NOT NULL,
-      created_at INTEGER NOT NULL,
-      last_used INTEGER NOT NULL,
-      revoked_at INTEGER,
-      UNIQUE(namespace, username, host_key)
-    );
-  `);
-
-  db.exec(`
-    INSERT OR IGNORE INTO authorized_hosts_v2 (
-      id, namespace, username, host_key, fingerprint, public_key, hostname, label,
-      local_endpoint, attestation, capabilities_json, status, created_at, last_used, revoked_at
-    )
-    SELECT
-      id,
-      CASE
-        WHEN username IS NOT NULL AND TRIM(username) <> '' THEN LOWER(TRIM(username)) || '.cleaker.me'
-        ELSE 'unknown'
-      END AS namespace,
-      username,
-      CASE
-        WHEN label IS NOT NULL AND TRIM(label) <> '' THEN LOWER(REPLACE(REPLACE(TRIM(label), '.local', ''), ' ', '-'))
-        WHEN fingerprint IS NOT NULL AND TRIM(fingerprint) <> '' THEN LOWER(TRIM(fingerprint))
-        ELSE 'host'
-      END AS host_key,
-      fingerprint,
-      public_key,
-      '' AS hostname,
-      label,
-      local_endpoint,
-      attestation,
-      capabilities_json,
-      status,
-      created_at,
-      last_used,
-      revoked_at
-    FROM authorized_hosts;
-  `);
-
-  db.exec(`DROP TABLE authorized_hosts;`);
-  db.exec(`ALTER TABLE authorized_hosts_v2 RENAME TO authorized_hosts;`);
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_authorized_hosts_namespace_username
-    ON authorized_hosts(namespace, username);
-  `);
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_authorized_hosts_status
-    ON authorized_hosts(status);
-  `);
-}
-
-migrateAuthorizedHostsSchema();
-
-if (hasAuthorizedHostColumn("namespace")) {
-  db.exec(`
-    CREATE INDEX IF NOT EXISTS idx_authorized_hosts_namespace_username
-    ON authorized_hosts(namespace, username);
-  `);
-}
-
-function normalizeUsername(input: string): string {
-  return String(input || "").trim().toLowerCase();
-}
-
-function normalizeHostKey(input: string): string {
-  return String(input || "")
-    .trim()
-    .toLowerCase()
-    .replace(/\.local$/i, "")
-    .replace(/[^a-z0-9_-]/g, "-")
-    .replace(/-+/g, "-")
-    .replace(/^-+|-+$/g, "");
-}
-
-function parseEndpointHost(input: string): string {
-  const raw = String(input || "").trim();
-  if (!raw) return "";
-
-  try {
-    return String(new URL(raw).hostname || "").trim().toLowerCase();
-  } catch {
-    return raw
-      .replace(/^https?:\/\//i, "")
-      .split("/")[0]
-      .split(":")[0]
-      .trim()
-      .toLowerCase();
-  }
-}
-
-function isLoopbackishHost(host: string): boolean {
-  const normalized = String(host || "").trim().toLowerCase();
-  return /^(localhost|127(?:\.\d{1,3}){3}|0\.0\.0\.0)$/.test(normalized);
-}
-
-function parseJsonSafe(raw: string): unknown {
-  try {
-    return JSON.parse(raw);
-  } catch {
-    return raw;
-  }
-}
-
-function stableStringify(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map((x) => stableStringify(x)).join(",")}]`;
-  const obj = value as Record<string, unknown>;
-  const keys = Object.keys(obj).sort();
-  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`).join(",")}}`;
-}
-
-function computeHash(input: {
-  namespace: string;
-  path: string;
-  operator: string | null;
-  data: unknown;
-  prevHash: string;
-  timestamp: number;
-}): string {
-  const h = crypto.createHash("sha256");
-  h.update(
-    stableStringify({
-      namespace: input.namespace,
-      path: input.path,
-      operator: input.operator,
-      data: input.data,
-      prevHash: input.prevHash,
-      timestamp: input.timestamp,
-    }),
-  );
-  return h.digest("hex");
-}
-
-function parseHostPath(memory: SemanticMemoryRow): {
-  namespace: string;
-  username: string;
-  hostKey: string;
-  field: HostField;
-} | null {
-  const namespace = String(memory.namespace || "").trim().toLowerCase();
-  const path = String(memory.path || "").trim();
-
-  const relative = path.match(/^host\.([a-z0-9_-]+)\.([a-z_]+)$/i);
-  if (relative) {
-    const username = normalizeUsername(String(namespace.split(".")[0] || ""));
-    const hostKey = normalizeHostKey(String(relative[1] || ""));
-    const field = String(relative[2] || "").trim() as HostField;
-    if (!username || !hostKey) return null;
-    if (!["fingerprint", "status", "capabilities", "last_seen", "local_endpoint", "public_key", "label", "hostname", "attestation"].includes(field)) {
-      return null;
-    }
-    return { namespace, username, hostKey, field };
-  }
-
-  const legacy = path.match(/^([a-z0-9._-]+)\.cleaker\.me\/hosts\/([^/]+)\/([a-z_]+)$/i);
-  if (!legacy) return null;
-  const username = normalizeUsername(String(legacy[1] || ""));
-  const hostKey = normalizeHostKey(String(legacy[2] || ""));
-  const field = String(legacy[3] || "").trim() as HostField;
-  if (!username || !hostKey) return null;
-  if (!["status", "capabilities", "last_seen", "local_endpoint", "public_key", "label", "attestation"].includes(field)) return null;
-  return {
-    namespace: namespace || `${username}.cleaker.me`,
-    username,
-    hostKey,
-    field,
-  };
-}
-
-function ensureHostBase(namespace: string, username: string, hostKey: string, timestamp: number): void {
-  const existing = db.prepare(`
-    SELECT id FROM authorized_hosts WHERE namespace = ? AND username = ? AND host_key = ?
-  `).get(namespace, username, hostKey) as { id: string } | undefined;
-
-  if (existing) return;
-
-  db.prepare(`
-    INSERT INTO authorized_hosts (
-      id, namespace, username, host_key, fingerprint, public_key, hostname, label, local_endpoint, attestation,
-      capabilities_json, status, created_at, last_used, revoked_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `).run(
-    crypto.randomUUID(),
-    namespace,
-    username,
-    hostKey,
-    "",
-    "",
-    "",
-    hostKey,
-    "localhost:8161",
-    "",
-    "[]",
-    "authorized",
-    timestamp,
-    timestamp,
-    null,
-  );
-}
-
-function projectHostMemory(memory: SemanticMemoryRow): void {
-  const parsed = parseHostPath(memory);
-  if (!parsed) return;
-
-  ensureHostBase(parsed.namespace, parsed.username, parsed.hostKey, memory.timestamp);
-
-  switch (parsed.field) {
-    case "fingerprint": {
-      db.prepare(`
-        UPDATE authorized_hosts
-        SET fingerprint = ?, last_used = ?
-        WHERE namespace = ? AND username = ? AND host_key = ?
-      `).run(String(memory.data || ""), memory.timestamp, parsed.namespace, parsed.username, parsed.hostKey);
-      break;
-    }
-    case "status": {
-      const status = String(memory.data || "").toLowerCase() === "revoked" ? "revoked" : "authorized";
-      db.prepare(`
-        UPDATE authorized_hosts
-        SET status = ?, last_used = ?, revoked_at = CASE WHEN ? = 'revoked' THEN ? ELSE NULL END
-        WHERE namespace = ? AND username = ? AND host_key = ?
-      `).run(status, memory.timestamp, status, memory.timestamp, parsed.namespace, parsed.username, parsed.hostKey);
-      break;
-    }
-    case "capabilities": {
-      const capabilities = Array.isArray(memory.data) ? memory.data : [];
-      db.prepare(`
-        UPDATE authorized_hosts
-        SET capabilities_json = ?, last_used = ?
-        WHERE namespace = ? AND username = ? AND host_key = ?
-      `).run(JSON.stringify(capabilities), memory.timestamp, parsed.namespace, parsed.username, parsed.hostKey);
-      break;
-    }
-    case "last_seen": {
-      const lastSeen = Number(memory.data || memory.timestamp);
-      db.prepare(`
-        UPDATE authorized_hosts
-        SET last_used = ?
-        WHERE namespace = ? AND username = ? AND host_key = ?
-      `).run(Number.isFinite(lastSeen) ? lastSeen : memory.timestamp, parsed.namespace, parsed.username, parsed.hostKey);
-      break;
-    }
-    case "local_endpoint": {
-      db.prepare(`
-        UPDATE authorized_hosts
-        SET local_endpoint = ?, last_used = ?
-        WHERE namespace = ? AND username = ? AND host_key = ?
-      `).run(String(memory.data || "localhost:8161"), memory.timestamp, parsed.namespace, parsed.username, parsed.hostKey);
-      break;
-    }
-    case "public_key": {
-      db.prepare(`
-        UPDATE authorized_hosts
-        SET public_key = ?, last_used = ?
-        WHERE namespace = ? AND username = ? AND host_key = ?
-      `).run(String(memory.data || ""), memory.timestamp, parsed.namespace, parsed.username, parsed.hostKey);
-      break;
-    }
-    case "label": {
-      db.prepare(`
-        UPDATE authorized_hosts
-        SET label = ?, last_used = ?
-        WHERE namespace = ? AND username = ? AND host_key = ?
-      `).run(String(memory.data || ""), memory.timestamp, parsed.namespace, parsed.username, parsed.hostKey);
-      break;
-    }
-    case "hostname": {
-      db.prepare(`
-        UPDATE authorized_hosts
-        SET hostname = ?, last_used = ?
-        WHERE namespace = ? AND username = ? AND host_key = ?
-      `).run(String(memory.data || ""), memory.timestamp, parsed.namespace, parsed.username, parsed.hostKey);
-      break;
-    }
-    case "attestation": {
-      db.prepare(`
-        UPDATE authorized_hosts
-        SET attestation = ?, last_used = ?
-        WHERE namespace = ? AND username = ? AND host_key = ?
-      `).run(String(memory.data || ""), memory.timestamp, parsed.namespace, parsed.username, parsed.hostKey);
-      break;
-    }
-    default:
-      break;
-  }
-}
-
-export function createSessionNonce(usernameInput: string, ttlMs = 120000): { username: string; nonce: string; iat: number; exp: number } {
-  const username = normalizeUsername(usernameInput);
+export function createSessionNonce(
+  usernameInput: string,
+  ttlMs = 120_000,
+): { username: string; nonce: string; iat: number; exp: number } {
+  const username = usernameInput.trim().toLowerCase();
   const iat = Date.now();
-  const exp = iat + Math.max(1000, ttlMs);
+  const exp = iat + Math.max(1_000, ttlMs);
   const nonce = crypto.randomBytes(24).toString("base64url");
-
-  db.prepare(`
-    INSERT INTO session_nonces (username, nonce, iat, exp)
-    VALUES (?, ?, ?, ?)
-    ON CONFLICT(username) DO UPDATE SET
-      nonce = excluded.nonce,
-      iat = excluded.iat,
-      exp = excluded.exp
-  `).run(username, nonce, iat, exp);
-
+  _nonces.set(username, { nonce, iat, exp });
   return { username, nonce, iat, exp };
 }
 
 export function consumeSessionNonce(usernameInput: string, nonceInput: string): boolean {
-  const username = normalizeUsername(usernameInput);
-  const nonce = String(nonceInput || "").trim();
+  const username = usernameInput.trim().toLowerCase();
+  const nonce = nonceInput.trim();
   if (!username || !nonce) return false;
-
-  const row = db.prepare(`
-    SELECT nonce, exp FROM session_nonces WHERE username = ?
-  `).get(username) as { nonce: string; exp: number } | undefined;
-
-  if (!row) return false;
-  const valid = row.nonce === nonce && Number(row.exp) >= Date.now();
-  if (valid) {
-    db.prepare(`DELETE FROM session_nonces WHERE username = ?`).run(username);
-  }
+  const record = _nonces.get(username);
+  if (!record) return false;
+  const valid = record.nonce === nonce && record.exp >= Date.now();
+  if (valid) _nonces.delete(username);
   return valid;
 }
+
+// ─── helpers ─────────────────────────────────────────────────────────────────
+
+function kernelWrite(namespace: string, path: string, data: unknown, operator?: string | null): void {
+  const kernel = getKernel();
+  const kpath = kernelPathFor(namespace, path);
+
+  if (operator === "-") {
+    kernel.execute(`me://self:write/${kpath.split(".").join("/")}`, undefined);
+    return;
+  }
+
+  if (operator === "=" && typeof data !== "object") {
+    // preserve explicit = operator via proxy eval syntax (primitives only — arrays/objects corrupt via eval)
+    const parts = kpath.split(".");
+    const leafName = parts[parts.length - 1]!;
+    const scopeParts = parts.slice(0, -1);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const scope = scopeParts.reduce((p: any, k) => p[k], kernel as any);
+    scope["="](leafName, data);
+    return;
+  }
+
+  kernel.execute(`me://self:write/${kpath.split(".").join("/")}`, data);
+}
+
+function kernelRead(namespace: string, path: string): unknown {
+  const kpath = kernelPathFor(namespace, path);
+  const mems = allMemories();
+  for (let i = mems.length - 1; i >= 0; i--) {
+    const m = mems[i]!;
+    if (m.path === kpath) {
+      return m.operator === "-" ? undefined : m.value;
+    }
+  }
+  return undefined;
+}
+
+function memoryToRow(mem: Memory, index: number): SemanticMemoryRow {
+  const kpath = mem.path;
+  let namespace = getRootNamespace();
+  let path = kpath;
+
+  if (kpath.startsWith("users.")) {
+    const rest = kpath.slice("users.".length);
+    const dot = rest.indexOf(".");
+    if (dot !== -1) {
+      const username = rest.slice(0, dot);
+      path = rest.slice(dot + 1);
+      namespace = `${username}.${getRootNamespace()}`;
+    }
+  }
+
+  return {
+    id: index,
+    namespace,
+    path,
+    operator: mem.operator as string | null,
+    data: mem.value,
+    hash: mem.hash,
+    prevHash: mem.prevHash ?? "",
+    signature: null,
+    timestamp: mem.timestamp,
+  };
+}
+
+function allMemories(): Memory[] {
+  return getKernel().memories as Memory[];
+}
+
+function memoriesForPrefix(prefix: string): Memory[] {
+  if (!prefix) {
+    // root namespace: exclude user sub-paths (users.X.*)
+    return allMemories().filter((m) => {
+      if (!m.path.startsWith("users.")) return true;
+      const afterUsers = m.path.slice("users.".length);
+      return !afterUsers.includes("."); // pointer level only (users.alice), not (users.alice.profile)
+    });
+  }
+  // Normalize: strip trailing dot so we always check startsWith(p + ".")
+  const p = prefix.endsWith(".") ? prefix.slice(0, -1) : prefix;
+  // For user-namespace prefix (users.X): exclude the pointer itself, only include sub-paths
+  const isUserPrefix = /^users\.[^.]+$/.test(p);
+  if (isUserPrefix) {
+    return allMemories().filter((m) => m.path.startsWith(`${p}.`));
+  }
+  return allMemories().filter((m) => m.path === p || m.path.startsWith(`${p}.`));
+}
+
+// ─── core memory API ─────────────────────────────────────────────────────────
 
 export function appendSemanticMemory(input: {
   namespace: string;
@@ -461,122 +167,32 @@ export function appendSemanticMemory(input: {
   expectedPrevHash?: string;
   timestamp?: number;
 }): SemanticMemoryRow {
-  const namespace = String(input.namespace || "").trim().toLowerCase();
-  const path = String(input.path || "").trim();
-  const operator = input.operator === undefined ? "=" : input.operator;
-  const signature = input.signature ?? null;
-  const timestamp = Number(input.timestamp || Date.now());
+  const namespace = input.namespace.trim().toLowerCase();
+  const path = input.path.trim();
+  if (!namespace || !path) throw new Error("INVALID_MEMORY_INPUT");
 
-  if (!namespace || !path) {
-    throw new Error("INVALID_MEMORY_INPUT");
-  }
+  kernelWrite(namespace, path, input.data, input.operator);
 
-  const tx = db.transaction(() => {
-    const last = db.prepare(`
-      SELECT hash FROM semantic_memories WHERE namespace = ? ORDER BY id DESC LIMIT 1
-    `).get(namespace) as { hash: string } | undefined;
+  const mems = allMemories();
+  const last = mems[mems.length - 1];
+  if (!last) throw new Error("MEMORY_WRITE_FAILED");
 
-    const prevHash = last?.hash || "";
-    if (input.expectedPrevHash !== undefined && input.expectedPrevHash !== prevHash) {
-      throw new Error("MEMORY_FORK_DETECTED");
-    }
-
-    const hash = computeHash({ namespace, path, operator, data: input.data, prevHash, timestamp });
-
-    const result = db.prepare(`
-      INSERT INTO semantic_memories (namespace, path, operator, data, hash, prevHash, signature, timestamp)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(namespace, path, operator, JSON.stringify(input.data ?? null), hash, prevHash, signature, timestamp);
-
-    const row = db.prepare(`
-      SELECT id, namespace, path, operator, data, hash, prevHash, signature, timestamp
-      FROM semantic_memories WHERE id = ?
-    `).get(result.lastInsertRowid) as {
-      id: number;
-      namespace: string;
-      path: string;
-      operator: string | null;
-      data: string;
-      hash: string;
-      prevHash: string;
-      signature: string | null;
-      timestamp: number;
-    };
-
-    const memory: SemanticMemoryRow = {
-      id: row.id,
-      namespace: row.namespace,
-      path: row.path,
-      operator: row.operator,
-      data: parseJsonSafe(row.data),
-      hash: row.hash,
-      prevHash: row.prevHash,
-      signature: row.signature,
-      timestamp: row.timestamp,
-    };
-
-    projectHostMemory(memory);
-    return memory;
-  });
-
-  return tx();
+  return memoryToRow(last, mems.length - 1);
 }
 
 export function listSemanticMemoriesByNamespace(
   namespaceInput: string,
   options: { prefix?: string; limit?: number } = {},
 ): SemanticMemoryRow[] {
-  const namespace = String(namespaceInput || "").trim().toLowerCase();
+  const namespace = namespaceInput.trim().toLowerCase();
   if (!namespace) return [];
 
-  const prefix = String(options.prefix || "").trim();
-  const limit = Math.max(1, Math.min(5000, Number(options.limit || 500)));
-  const like = prefix ? `${prefix}%` : null;
-  const rows = like
-    ? db.prepare(`
-      SELECT id, namespace, path, operator, data, hash, prevHash, signature, timestamp
-      FROM (
-        SELECT id, namespace, path, operator, data, hash, prevHash, signature, timestamp
-        FROM semantic_memories
-        WHERE namespace = ? AND path LIKE ?
-        ORDER BY id DESC
-        LIMIT ?
-      )
-      ORDER BY id ASC
-    `).all(namespace, like, limit)
-    : db.prepare(`
-      SELECT id, namespace, path, operator, data, hash, prevHash, signature, timestamp
-      FROM (
-        SELECT id, namespace, path, operator, data, hash, prevHash, signature, timestamp
-        FROM semantic_memories
-        WHERE namespace = ?
-        ORDER BY id DESC
-        LIMIT ?
-      )
-      ORDER BY id ASC
-    `).all(namespace, limit);
+  const prefix = namespaceToKernelPrefix(namespace);
+  const pathFilter = options.prefix ? `${prefix ? prefix + "." : ""}${options.prefix}` : prefix;
+  const limit = Math.max(1, Math.min(5_000, options.limit ?? 500));
 
-  return (rows as Array<{
-    id: number;
-    namespace: string;
-    path: string;
-    operator: string | null;
-    data: string;
-    hash: string;
-    prevHash: string;
-    signature: string | null;
-    timestamp: number;
-  }>).map((row) => ({
-    id: row.id,
-    namespace: row.namespace,
-    path: row.path,
-    operator: row.operator,
-    data: parseJsonSafe(row.data),
-    hash: row.hash,
-    prevHash: row.prevHash,
-    signature: row.signature,
-    timestamp: row.timestamp,
-  }));
+  const mems = memoriesForPrefix(pathFilter);
+  return mems.slice(-limit).map((m, i) => memoryToRow(m, i));
 }
 
 export function listSemanticMemoriesByNamespaceBranch(
@@ -584,91 +200,45 @@ export function listSemanticMemoriesByNamespaceBranch(
   branchPathInput: string,
   options: { limit?: number } = {},
 ): SemanticMemoryRow[] {
-  const namespace = String(namespaceInput || "").trim().toLowerCase();
+  const namespace = namespaceInput.trim().toLowerCase();
   if (!namespace) return [];
 
-  const branchPath = String(branchPathInput || "")
-    .split(".")
-    .map((segment) => segment.trim())
-    .filter(Boolean)
-    .join(".");
+  const branchPath = branchPathInput.split(".").filter(Boolean).join(".");
+  if (!branchPath) return listSemanticMemoriesByNamespace(namespace, options);
 
-  if (!branchPath) {
-    return listSemanticMemoriesByNamespace(namespace, options);
-  }
+  const prefix = namespaceToKernelPrefix(namespace);
+  const fullBranch = prefix ? `${prefix}.${branchPath}` : branchPath;
+  const limit = Math.max(1, Math.min(5_000, options.limit ?? 500));
 
-  const limit = Math.max(1, Math.min(5000, Number(options.limit || 500)));
-  const rows = db.prepare(`
-    SELECT id, namespace, path, operator, data, hash, prevHash, signature, timestamp
-    FROM (
-      SELECT id, namespace, path, operator, data, hash, prevHash, signature, timestamp
-      FROM semantic_memories
-      WHERE namespace = ? AND (path = ? OR path LIKE ?)
-      ORDER BY id DESC
-      LIMIT ?
-    )
-    ORDER BY id ASC
-  `).all(namespace, branchPath, `${branchPath}.%`, limit) as Array<{
-    id: number;
-    namespace: string;
-    path: string;
-    operator: string | null;
-    data: string;
-    hash: string;
-    prevHash: string;
-    signature: string | null;
-    timestamp: number;
-  }>;
+  const mems = memoriesForPrefix(fullBranch);
+  return mems.slice(-limit).map((m, i) => memoryToRow(m, i));
+}
 
-  return rows.map((row) => ({
-    id: row.id,
-    namespace: row.namespace,
-    path: row.path,
-    operator: row.operator,
-    data: parseJsonSafe(row.data),
-    hash: row.hash,
-    prevHash: row.prevHash,
-    signature: row.signature,
-    timestamp: row.timestamp,
-  }));
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function setDeepValue(target: Record<string, unknown>, pathInput: string, value: unknown): void {
-  const parts = String(pathInput || "").split(".").filter(Boolean);
-  if (parts.length === 0) return;
-
+  const parts = pathInput.split(".").filter(Boolean);
+  if (!parts.length) return;
   let cursor: Record<string, unknown> = target;
-  for (let index = 0; index < parts.length; index += 1) {
-    const key = parts[index]!;
-    const isLast = index === parts.length - 1;
-
-    if (isLast) {
-      cursor[key] = value;
-      return;
-    }
-
-    const current = cursor[key];
-    if (!isPlainObject(current)) {
-      cursor[key] = {};
-    }
+  for (let i = 0; i < parts.length; i++) {
+    const key = parts[i]!;
+    if (i === parts.length - 1) { cursor[key] = value; return; }
+    if (!isPlainObject(cursor[key])) cursor[key] = {};
     cursor = cursor[key] as Record<string, unknown>;
   }
 }
 
 function deleteDeepValue(target: Record<string, unknown>, pathInput: string): void {
-  const parts = String(pathInput || "").split(".").filter(Boolean);
-  if (parts.length === 0) return;
-
+  const parts = pathInput.split(".").filter(Boolean);
+  if (!parts.length) return;
   let cursor: Record<string, unknown> = target;
-  for (let index = 0; index < parts.length - 1; index += 1) {
-    const key = parts[index]!;
-    const current = cursor[key];
-    if (!isPlainObject(current)) {
-      return;
-    }
-    cursor = current;
+  for (let i = 0; i < parts.length - 1; i++) {
+    const key = parts[i]!;
+    if (!isPlainObject(cursor[key])) return;
+    cursor = cursor[key] as Record<string, unknown>;
   }
-
   delete cursor[parts[parts.length - 1]!];
 }
 
@@ -676,20 +246,12 @@ export function buildSemanticTreeForNamespace(
   namespaceInput: string,
   options: { prefix?: string; limit?: number } = {},
 ): Record<string, unknown> {
-  const memories = listSemanticMemoriesByNamespace(namespaceInput, {
-    ...options,
-    limit: options.limit ?? 10000,
-  });
-
+  const memories = listSemanticMemoriesByNamespace(namespaceInput, { ...options, limit: options.limit ?? 10_000 });
   const tree: Record<string, unknown> = {};
-  for (const memory of memories) {
-    if (memory.operator === "-") {
-      deleteDeepValue(tree, memory.path);
-      continue;
-    }
-    setDeepValue(tree, memory.path, memory.data);
+  for (const mem of memories) {
+    if (mem.operator === "-") { deleteDeepValue(tree, mem.path); continue; }
+    setDeepValue(tree, mem.path, mem.data);
   }
-
   return tree;
 }
 
@@ -698,52 +260,34 @@ export function buildSemanticBranchTreeForNamespace(
   branchPathInput: string,
   options: { limit?: number } = {},
 ): Record<string, unknown> {
-  const memories = listSemanticMemoriesByNamespaceBranch(namespaceInput, branchPathInput, {
-    limit: options.limit ?? 10000,
-  });
-
+  const memories = listSemanticMemoriesByNamespaceBranch(namespaceInput, branchPathInput, { limit: options.limit ?? 10_000 });
   const tree: Record<string, unknown> = {};
-  for (const memory of memories) {
-    if (memory.operator === "-") {
-      deleteDeepValue(tree, memory.path);
-      continue;
-    }
-    setDeepValue(tree, memory.path, memory.data);
+  for (const mem of memories) {
+    if (mem.operator === "-") { deleteDeepValue(tree, mem.path); continue; }
+    setDeepValue(tree, mem.path, mem.data);
   }
-
   return tree;
 }
 
 function getDeepValue(target: unknown, pathInput: string): unknown {
-  const parts = String(pathInput || "").split(".").filter(Boolean);
-  if (parts.length === 0) return target;
-
+  const parts = pathInput.split(".").filter(Boolean);
   let cursor = target;
   for (const part of parts) {
     if (!isPlainObject(cursor)) return undefined;
     cursor = cursor[part];
-    if (typeof cursor === "undefined") return undefined;
   }
-
   return cursor;
 }
 
-export function readSemanticBranchForNamespace(
-  namespaceInput: string,
-  pathInput: string,
-): unknown {
-  const path = String(pathInput || "").split(".").filter(Boolean).join(".");
+export function readSemanticBranchForNamespace(namespaceInput: string, pathInput: string): unknown {
+  const path = pathInput.split(".").filter(Boolean).join(".");
   if (!path) return buildSemanticTreeForNamespace(namespaceInput);
-
   const tree = buildSemanticBranchTreeForNamespace(namespaceInput, path);
   return getDeepValue(tree, path);
 }
 
-export function readSemanticValueForNamespace(
-  namespaceInput: string,
-  pathInput: string,
-): unknown {
-  return readSemanticBranchForNamespace(namespaceInput, pathInput);
+export function readSemanticValueForNamespace(namespaceInput: string, pathInput: string): unknown {
+  return kernelRead(namespaceInput, pathInput);
 }
 
 export function listSemanticMemoriesByRootNamespace(
@@ -753,166 +297,103 @@ export function listSemanticMemoriesByRootNamespace(
   const rootNamespace = normalizeNamespaceRootName(rootNamespaceInput);
   if (!rootNamespace) return [];
 
-  const limit = Math.max(1, Math.min(5000, Number(options.limit || 500)));
-  const rows = db.prepare(`
-    SELECT id, namespace, path, operator, data, hash, prevHash, signature, timestamp
-    FROM semantic_memories
-    ORDER BY id DESC
-    LIMIT ?
-  `).all(limit * 10) as Array<{
-    id: number;
-    namespace: string;
-    path: string;
-    operator: string | null;
-    data: string;
-    hash: string;
-    prevHash: string;
-    signature: string | null;
-    timestamp: number;
-  }>;
+  const limit = Math.max(1, Math.min(5_000, options.limit ?? 500));
+  const mems = allMemories();
 
-  return rows
-    .map((row) => ({
-      id: row.id,
-      namespace: row.namespace,
-      path: row.path,
-      operator: row.operator,
-      data: parseJsonSafe(row.data),
-      hash: row.hash,
-      prevHash: row.prevHash,
-      signature: row.signature,
-      timestamp: row.timestamp,
-    }))
+  return mems
+    .map((m, i) => memoryToRow(m, i))
     .filter((row) => normalizeNamespaceRootName(row.namespace) === rootNamespace)
     .slice(0, limit);
 }
 
-export function rebuildAuthorizedHostsProjection(usernameInput?: string): number {
-  const username = usernameInput ? normalizeUsername(usernameInput) : "";
+// ─── authorized hosts (kernel-backed projection) ─────────────────────────────
 
-  if (username) {
-    db.prepare(`DELETE FROM authorized_hosts WHERE username = ?`).run(username);
-  } else {
-    db.prepare(`DELETE FROM authorized_hosts`).run();
-  }
+function normalizeHostKey(input: string): string {
+  return input.trim().toLowerCase()
+    .replace(/\.local$/i, "")
+    .replace(/[^a-z0-9_-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
 
-  const rows = db.prepare(`
-    SELECT id, namespace, path, operator, data, hash, prevHash, signature, timestamp
-    FROM semantic_memories
-    WHERE path LIKE ? OR path LIKE ?
-    ORDER BY id ASC
-  `).all("host.%", "%/hosts/%") as Array<{
-    id: number;
-    namespace: string;
-    path: string;
-    operator: string | null;
-    data: string;
-    hash: string;
-    prevHash: string;
-    signature: string | null;
-    timestamp: number;
-  }>;
+function hostKernelPrefix(namespace: string, hostKey: string): string {
+  const prefix = namespaceToKernelPrefix(namespace);
+  return prefix ? `${prefix}.host.${hostKey}` : `host.${hostKey}`;
+}
 
-  for (const row of rows) {
-    if (username) {
-      const parsed = parseHostPath({
-        id: row.id,
-        namespace: row.namespace,
-        path: row.path,
-        operator: row.operator,
-        data: parseJsonSafe(row.data),
-        hash: row.hash,
-        prevHash: row.prevHash,
-        signature: row.signature,
-        timestamp: row.timestamp,
+export function listHostsByNamespace(namespaceInput: string, usernameInput: string): AuthorizedHostRow[] {
+  const namespace = namespaceInput.trim().toLowerCase();
+  const username = usernameInput.trim().toLowerCase();
+  if (!username) return [];
+
+  const targetNs = namespace || `${username}.${getRootNamespace()}`;
+  const prefix = namespaceToKernelPrefix(targetNs);
+  const hostsPrefix = prefix ? `${prefix}.host` : "host";
+
+  const mems = memoriesForPrefix(hostsPrefix);
+  const hostMap = new Map<string, AuthorizedHostRow>();
+
+  for (const mem of mems) {
+    const rel = mem.path.slice(hostsPrefix.length + 1); // e.g. "macbook.status"
+    const dot = rel.indexOf(".");
+    if (dot === -1) continue;
+    const hkey = rel.slice(0, dot);
+    const field = rel.slice(dot + 1);
+
+    if (!hostMap.has(hkey)) {
+      hostMap.set(hkey, {
+        id: crypto.randomUUID(),
+        namespace: targetNs,
+        username,
+        host_key: hkey,
+        fingerprint: "",
+        public_key: "",
+        hostname: "",
+        label: hkey,
+        local_endpoint: "localhost:8161",
+        attestation: "",
+        capabilities_json: "[]",
+        status: "authorized",
+        created_at: mem.timestamp,
+        last_used: mem.timestamp,
+        revoked_at: null,
       });
-      if (!parsed || parsed.username !== username) continue;
     }
 
-    projectHostMemory({
-      id: row.id,
-      namespace: row.namespace,
-      path: row.path,
-      operator: row.operator,
-      data: parseJsonSafe(row.data),
-      hash: row.hash,
-      prevHash: row.prevHash,
-      signature: row.signature,
-      timestamp: row.timestamp,
-    });
+    const row = hostMap.get(hkey)!;
+    const val = mem.value;
+    switch (field) {
+      case "fingerprint": row.fingerprint = String(val ?? ""); break;
+      case "public_key": row.public_key = String(val ?? ""); break;
+      case "hostname": row.hostname = String(val ?? ""); break;
+      case "label": row.label = String(val ?? ""); break;
+      case "local_endpoint": row.local_endpoint = String(val ?? ""); break;
+      case "attestation": row.attestation = String(val ?? ""); break;
+      case "capabilities": row.capabilities_json = JSON.stringify(Array.isArray(val) ? val : []); break;
+      case "status":
+        row.status = String(val ?? "").toLowerCase() === "revoked" ? "revoked" : "authorized";
+        if (row.status === "revoked") row.revoked_at = mem.timestamp;
+        break;
+      case "last_used": row.last_used = Number(val ?? mem.timestamp); break;
+    }
+    if (mem.timestamp > row.last_used) row.last_used = mem.timestamp;
   }
 
-  return rows.length;
+  return [...hostMap.values()].sort((a, b) => b.last_used - a.last_used);
 }
 
 export function listHostsByUsername(usernameInput: string): AuthorizedHostRow[] {
   return listHostsByNamespace("", usernameInput);
 }
 
-export function listHostsByNamespace(namespaceInput: string, usernameInput: string): AuthorizedHostRow[] {
-  const namespace = String(namespaceInput || "").trim().toLowerCase();
-  const username = normalizeUsername(usernameInput);
-  if (!username) return [];
-
-  const query = namespace
-    ? db.prepare(`
-    SELECT
-      id,
-      namespace,
-      username,
-      host_key,
-      fingerprint,
-      public_key,
-      hostname,
-      label,
-      local_endpoint,
-      attestation,
-      capabilities_json,
-      status,
-      created_at,
-      last_used,
-      revoked_at
-    FROM authorized_hosts
-    WHERE namespace = ? AND username = ?
-    ORDER BY last_used DESC
-  `)
-    : db.prepare(`
-    SELECT
-      id,
-      namespace,
-      username,
-      host_key,
-      fingerprint,
-      public_key,
-      hostname,
-      label,
-      local_endpoint,
-      attestation,
-      capabilities_json,
-      status,
-      created_at,
-      last_used,
-      revoked_at
-    FROM authorized_hosts
-    WHERE username = ?
-    ORDER BY last_used DESC
-  `);
-
-  return (namespace ? query.all(namespace, username) : query.all(username)) as AuthorizedHostRow[];
-}
-
-export function getHostStatus(namespaceInput: string, usernameInput: string, fingerprintInput: string): "authorized" | "revoked" | null {
-  const namespace = String(namespaceInput || "").trim().toLowerCase();
-  const username = normalizeUsername(usernameInput);
-  const fingerprint = String(fingerprintInput || "").trim();
-  if (!namespace || !username || !fingerprint) return null;
-
-  const row = db.prepare(`
-    SELECT status FROM authorized_hosts WHERE username = ? AND fingerprint = ?
-    AND namespace = ?
-  `).get(username, fingerprint, namespace) as { status: "authorized" | "revoked" } | undefined;
-
-  return row?.status || null;
+export function getHostStatus(
+  namespaceInput: string,
+  usernameInput: string,
+  fingerprintInput: string,
+): "authorized" | "revoked" | null {
+  const hosts = listHostsByNamespace(namespaceInput, usernameInput);
+  const host = hosts.find((h) => h.fingerprint === fingerprintInput.trim());
+  return host?.status ?? null;
 }
 
 export function listHostMemoryHistory(
@@ -921,48 +402,29 @@ export function listHostMemoryHistory(
   fingerprintInput: string,
   limitInput = 200,
 ): HostMemoryHistoryRow[] {
-  const namespace = String(namespaceInput || "").trim().toLowerCase();
-  const username = normalizeUsername(usernameInput);
-  const fingerprint = String(fingerprintInput || "").trim();
+  const namespace = namespaceInput.trim().toLowerCase();
+  const username = usernameInput.trim().toLowerCase();
+  const fingerprint = fingerprintInput.trim();
   if (!namespace || !username || !fingerprint) return [];
-  const limit = Math.max(1, Math.min(2000, Number(limitInput || 200)));
-  const host = db.prepare(`
-    SELECT host_key FROM authorized_hosts WHERE namespace = ? AND username = ? AND fingerprint = ?
-  `).get(namespace, username, fingerprint) as { host_key: string } | undefined;
-  const hostKey = normalizeHostKey(String(host?.host_key || fingerprint));
-  const modernPrefix = `host.${hostKey}.`;
-  const legacyPrefix = `${namespace}/hosts/${fingerprint}/`;
 
-  const rows = db.prepare(`
-    SELECT id, namespace, path, operator, data, hash, prevHash, signature, timestamp
-    FROM semantic_memories
-    WHERE namespace = ? AND (path LIKE ? OR path LIKE ?)
-    ORDER BY id DESC
-    LIMIT ?
-  `).all(namespace, `${modernPrefix}%`, `${legacyPrefix}%`, limit) as Array<{
-    id: number;
-    namespace: string;
-    path: string;
-    operator: string | null;
-    data: string;
-    hash: string;
-    prevHash: string;
-    signature: string | null;
-    timestamp: number;
-  }>;
+  const hosts = listHostsByNamespace(namespace, username);
+  const host = hosts.find((h) => h.fingerprint === fingerprint);
+  const hostKey = host ? host.host_key : normalizeHostKey(fingerprint);
 
-  return rows.map((row) => ({
-    id: row.id,
-    namespace: row.namespace,
-    path: row.path,
-    operator: row.operator,
-    data: parseJsonSafe(row.data),
-    hash: row.hash,
-    prevHash: row.prevHash,
-    signature: row.signature,
-    timestamp: row.timestamp,
-    host_key: hostKey,
+  const prefix = hostKernelPrefix(namespace, hostKey);
+  const limit = Math.max(1, Math.min(2_000, limitInput));
+  const mems = memoriesForPrefix(prefix).slice(-limit);
+
+  return mems.map((m, i) => ({
+    ...memoryToRow(m, i),
+    namespace,
     username,
     fingerprint,
+    host_key: hostKey,
   }));
+}
+
+export function rebuildAuthorizedHostsProjection(_usernameInput?: string): number {
+  // no-op: kernel memories are the source of truth, no separate projection needed
+  return 0;
 }

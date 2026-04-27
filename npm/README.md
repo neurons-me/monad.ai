@@ -28,7 +28,7 @@ This means:
 - Reality exists before identity
 
 ### 3. Universal Ledger
-Cleaker stores facts as immutable blocks in SQLite:
+Monad.ai stores facts as immutable blocks in local state files plus the `.me` kernel:
 
 - `POST /` → append a block to the ledger
 - `GET /` / `GET /blocks` → read blocks (filterable by namespace, identityHash, limit)
@@ -59,14 +59,10 @@ The server also exposes identity primitives:
 - `POST /faces/match` — cosine similarity matching
 
 ### 6. Data Layer
-- SQLite via `better-sqlite3`
-- Single shared connection
-- WAL enabled
-- DB path currently derived from `process.cwd()`
-- Tables:
-  - `blocks`
-  - `users`
-  - `faces`
+- `.me` kernel + `DiskStore` for semantic state
+- Snapshot + local JSON state files under `me-state/`
+- Persistent claim bundles on disk
+- No SQLite dependency in the runtime path
 
 ---
 
@@ -96,7 +92,7 @@ This will live in `src/engine/*` and be exportable as a library.
 ### 2. Server (Transport)
 The Express server becomes:
 - A thin HTTP transport
-- A host for persistence (SQLite)
+- A host for local kernel-backed persistence
 - A gateway that maps HTTP → engine calls
 
 Minimal logic. Mostly wiring.

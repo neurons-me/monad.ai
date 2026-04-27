@@ -1,106 +1,53 @@
-// www/api/src/Blockchain/blockchain.ts
-// -----------------------------------------------------------------------------
-// Ledger blocks table (uses the shared SQLite instance from db.ts)
-// -----------------------------------------------------------------------------
-import { db } from "./db";
-// -----------------------------------------------------------------------------
-// SCHEMA (only once per host)
-// -----------------------------------------------------------------------------
-// 1) Create tables (no indexes yet; migrations may add columns on existing DBs)
-db.exec(`
-CREATE TABLE IF NOT EXISTS blocks (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  blockId TEXT NOT NULL UNIQUE,
-  timestamp INTEGER NOT NULL,
-  namespace TEXT NOT NULL,
-  identityHash TEXT NOT NULL,
-  expression TEXT NOT NULL,
-  json TEXT NOT NULL
-);
+import { readJsonState, writeJsonState } from "../state/jsonStore.js";
 
-CREATE TABLE IF NOT EXISTS users (
-  username TEXT PRIMARY KEY,
-  identityHash TEXT NOT NULL,
-  publicKey TEXT NOT NULL,
-  commitment TEXT,
-  identityNoise TEXT,
-  createdAt INTEGER NOT NULL,
-  updatedAt INTEGER NOT NULL
-);
+export type LedgerBlockRow = {
+  blockId: string;
+  timestamp: number;
+  namespace: string;
+  identityHash: string;
+  expression: string;
+  json: unknown;
+};
 
-CREATE TABLE IF NOT EXISTS claims (
-  namespace TEXT PRIMARY KEY,
-  identityHash TEXT NOT NULL,
-  encryptedNoise TEXT NOT NULL,
-  publicKey TEXT,
-  createdAt INTEGER NOT NULL,
-  updatedAt INTEGER NOT NULL
-);
-`);
+const BLOCKS_STATE_FILE = "ledger-blocks.json";
 
-// 2) Lightweight migrations (safe for existing DBs)
-function addColumnIfMissing(table: string, col: string, type: string) {
-  const info = db.prepare(`PRAGMA table_info(${table})`).all() as any[];
-  const exists = info.some((r) => r.name === col);
-  if (!exists) {
-    db.exec(`ALTER TABLE ${table} ADD COLUMN ${col} ${type}`);
-    console.log(`🧬 Migration: added ${table}.${col}`);
-  }
-}
-addColumnIfMissing("users", "commitment", "TEXT");
-addColumnIfMissing("users", "identityNoise", "TEXT");
-// Backfill NOT NULL expectations for newly added columns on old rows (if any)
-db.exec(`
-UPDATE users SET commitment = '' WHERE commitment IS NULL;
-UPDATE users SET identityNoise = '' WHERE identityNoise IS NULL;
-`);
-
-// 3) Create indexes (after columns exist)
-db.exec(`
-CREATE INDEX IF NOT EXISTS idx_blocks_identity ON blocks(identityHash);
-CREATE INDEX IF NOT EXISTS idx_blocks_namespace ON blocks(namespace);
-CREATE INDEX IF NOT EXISTS idx_blocks_ts ON blocks(timestamp);
-CREATE INDEX IF NOT EXISTS idx_users_identity ON users(identityHash);
-CREATE INDEX IF NOT EXISTS idx_users_commitment ON users(commitment);
-CREATE INDEX IF NOT EXISTS idx_claims_identity ON claims(identityHash);
-`);
-
-// -----------------------------------------------------------------------------
-// Insert Block
-// -----------------------------------------------------------------------------
-const insertStmt = db.prepare(`
-  INSERT INTO blocks (blockId, timestamp, namespace, identityHash, expression, json)
-  VALUES (@blockId, @timestamp, @namespace, @identityHash, @expression, @json)
-`);
-
-export function appendBlock(block: any) {
-  const payload = block?.json ?? block;
-  insertStmt.run({
-    blockId: block.blockId,
-    timestamp: block.timestamp,
-    namespace: block.namespace,
-    identityHash: block.identityHash,
-    expression: block.expression,
-    json: JSON.stringify(payload),
-  });
-  return { ok: true, blockId: block.blockId };
+function readBlocks(): LedgerBlockRow[] {
+  const rows = readJsonState<LedgerBlockRow[]>(BLOCKS_STATE_FILE, []);
+  return Array.isArray(rows) ? rows : [];
 }
 
-// -----------------------------------------------------------------------------
-// Read Blocks
-// -----------------------------------------------------------------------------
-export function getAllBlocks() {
-  return db.prepare("SELECT rowid AS _rowid, * FROM blocks ORDER BY rowid ASC").all();
+function writeBlocks(rows: LedgerBlockRow[]): void {
+  writeJsonState(BLOCKS_STATE_FILE, rows);
 }
 
-export function getBlocksForIdentity(identityHash: string) {
-  return db.prepare(`
-    SELECT rowid AS _rowid, * FROM blocks WHERE identityHash = ? ORDER BY rowid ASC
-  `).all(identityHash);
+export function appendBlock(block: Partial<LedgerBlockRow>) {
+  const row: LedgerBlockRow = {
+    blockId: String(block.blockId || "").trim(),
+    timestamp: Number(block.timestamp || Date.now()),
+    namespace: String(block.namespace || "").trim().toLowerCase(),
+    identityHash: String(block.identityHash || "").trim(),
+    expression: String(block.expression || "").trim(),
+    json: block.json ?? block,
+  };
+
+  const rows = readBlocks();
+  rows.push(row);
+  writeBlocks(rows);
+  return { ok: true, blockId: row.blockId };
 }
 
-export function getBlocksForNamespace(namespace: string) {
-  return db.prepare(`
-    SELECT rowid AS _rowid, * FROM blocks WHERE namespace = ? ORDER BY rowid ASC
-  `).all(namespace);
+export function getAllBlocks(): LedgerBlockRow[] {
+  return readBlocks();
+}
+
+export function getBlocksForIdentity(identityHash: string): LedgerBlockRow[] {
+  const target = String(identityHash || "").trim();
+  if (!target) return [];
+  return readBlocks().filter((row) => row.identityHash === target);
+}
+
+export function getBlocksForNamespace(namespace: string): LedgerBlockRow[] {
+  const target = String(namespace || "").trim().toLowerCase();
+  if (!target) return [];
+  return readBlocks().filter((row) => row.namespace === target);
 }

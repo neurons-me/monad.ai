@@ -4,7 +4,6 @@ import path from "path";
 import crypto from "crypto";
 import { claimNamespace } from "../src/claim/records";
 import { seedClaimNamespaceSemantics } from "../src/claim/claimSemantics";
-import { db } from "../src/Blockchain/db";
 import { readSemanticValueForNamespace } from "../src/claim/memoryStore";
 
 describe("claim semantic seeds", () => {
@@ -53,9 +52,5 @@ describe("claim semantic seeds", () => {
     expect(readSemanticValueForNamespace(namespace, "keys.namespace")).toBe(namespace);
     expect(readSemanticValueForNamespace(namespace, "polls.studio.categories.jobs.label")).toBe("Jobs");
     expect(readSemanticValueForNamespace(namespace, "polls.studio.categories.housing.kind")).toBe("housing");
-
-    db.prepare(`DELETE FROM semantic_memories WHERE namespace = ?`).run(namespace);
-    db.prepare(`DELETE FROM semantic_memories WHERE namespace = ? AND path = ?`).run("cleaker.me", `users.${username}`);
-    db.prepare(`DELETE FROM claims WHERE namespace = ?`).run(namespace);
   });
 });

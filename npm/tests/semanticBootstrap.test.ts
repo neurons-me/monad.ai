@@ -1,5 +1,4 @@
 import assert from "assert";
-import { db } from "../src/Blockchain/db";
 import { ensureRootSemanticBootstrap } from "../src/claim/semanticBootstrap";
 import {
   listSemanticMemoriesByNamespace,
@@ -11,13 +10,7 @@ import { normalizeNamespaceRootName } from "../src/namespace/identity";
 const ROOT_NAMESPACE = "semantic-bootstrap.cleaker.me";
 const CANONICAL_ROOT = normalizeNamespaceRootName(ROOT_NAMESPACE);
 
-function cleanupRootNamespace() {
-  db.prepare(`DELETE FROM semantic_memories WHERE namespace = ?`).run(CANONICAL_ROOT);
-}
-
 test("seeds only root schema roles into semantic memories", () => {
-  cleanupRootNamespace();
-
   const inserted = ensureRootSemanticBootstrap(ROOT_NAMESPACE);
   assert.ok(inserted >= 100, "expected semantic bootstrap to seed root schema + gui lexicon");
 
@@ -113,6 +106,4 @@ test("seeds only root schema roles into semantic memories", () => {
     readSemanticValueForNamespace(CANONICAL_ROOT, "groups.dev-team"),
     undefined,
   );
-
-  cleanupRootNamespace();
 });

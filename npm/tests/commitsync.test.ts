@@ -1,55 +1,41 @@
 // CommitSync protocol integration tests for Monad.ai
-// Uses Jest and Supertest
 import ME from 'this.me';
-import cleaker from 'cleaker';
-const request = require('supertest');
-const app = require('../server');
+import { appendSemanticMemory, listSemanticMemoriesByNamespace } from '../src/claim/memoryStore';
+
 describe('CommitSync: Memory Ledger', () => {
   const testNamespace = 'user.cleaker.me';
   const initialMemory = {
+    namespace: testNamespace,
     path: 'profile.name',
     operator: '=',
-    value: 'Abella',
-    hash: 'mem_hash_001',
-    prevHash: null
+    data: 'Abella',
+    timestamp: Date.now(),
   };
 
   it('should commit a new memory to the ledger', async () => {
-    const res = await request(app)
-      .post('/api/v1/commit')
-      .send({
-        namespace: testNamespace,
-        memory: initialMemory,
-        signature: 'sig_alpha'
-      });
-    expect(res.status).toBe(201);
-    expect(res.body.hash).toBe('mem_hash_001');
+    const memory = appendSemanticMemory(initialMemory);
+    expect(memory.path).toBe('profile.name');
+    expect(memory.hash).toBeTruthy();
   });
 
   it('should sync memories incrementally', async () => {
-    const res = await request(app)
-      .get('/api/v1/sync')
-      .query({ namespace: testNamespace, afterHash: 'mem_hash_001' });
-    expect(res.status).toBe(200);
-    expect(res.body.memories).toBeDefined();
+    const memories = listSemanticMemoriesByNamespace(testNamespace, { limit: 50 });
+    expect(Array.isArray(memories)).toBe(true);
+    expect(memories.some((memory) => memory.path === 'profile.name')).toBe(true);
   });
 });
 
 describe('SessionOrchestrator: Memory Replay', () => {
   it('should rebuild state by learning from the memory log', async () => {
-    const me = new ME();
-    const node = cleaker(me, {
-      namespace: 'user.cleaker.me',
-      origin: 'http://localhost:8161',
-    });
+    const me = new ME('test-seed-commitsync');
 
     const memoryLog = [
-      { path: 'settings.theme', value: 'dark', operator: '=', hash: 'h1' },
-      { path: 'settings.font', value: 'mono', operator: '=', hash: 'h2' }
+      { path: 'settings.theme', expression: 'dark', value: 'dark', operator: '=', hash: 'h1', timestamp: 1 },
+      { path: 'settings.font', expression: 'mono', value: 'mono', operator: '=', hash: 'h2', timestamp: 2 }
     ];
 
-    memoryLog.forEach(mem => me.learn(mem));
-    expect(me.settings.theme).toBe('dark');
-    expect(me.settings.font).toBe('mono');
+    me.replayMemories(memoryLog);
+    expect((me as any)('settings.theme')).toBe('dark');
+    expect((me as any)('settings.font')).toBe('mono');
   });
 });

@@ -1,9 +1,9 @@
 import assert from "assert";
 import crypto from "crypto";
 import fs from "fs";
-import { db } from "../src/Blockchain/db";
 import { claimNamespace } from "../src/claim/records";
 import { getUsersForRootNamespace } from "../src/Blockchain/users";
+import { listSemanticMemoriesByNamespace } from "../src/claim/memoryStore";
 import { composeProjectedNamespace, normalizeNamespaceRootName } from "../src/namespace/identity";
 import { deletePersistentClaim, getPersistentClaimPath } from "../src/claim/manager";
 
@@ -50,22 +50,12 @@ test("projects claimed users from the root namespace", async () => {
       "root namespace users should include the second claimed username",
     );
 
-    const rootPointers = db
-      .prepare(`SELECT namespace, path FROM semantic_memories WHERE path IN (?, ?) ORDER BY id ASC`)
-      .all(`users.${usernameA}`, `users.${usernameB}`) as Array<{ namespace: string; path: string }>;
+    const rootPointers = listSemanticMemoriesByNamespace(localRoot, { limit: 500 }).filter((row) =>
+      row.path === `users.${usernameA}` || row.path === `users.${usernameB}`,
+    );
 
-    assert.ok(
-      rootPointers.every((row) => row.namespace === localRoot),
-      "root user pointers should be materialized in the root namespace family",
-    );
+    assert.equal(rootPointers.length, 2, "root user pointers should be visible through the projected root namespace");
   } finally {
-    db.prepare(`DELETE FROM claims WHERE namespace IN (?, ?)`).run(namespaceA, namespaceB);
-    db.prepare(`DELETE FROM semantic_memories WHERE namespace IN (?, ?)`).run(namespaceA, namespaceB);
-    db.prepare(`DELETE FROM semantic_memories WHERE namespace = ? AND path IN (?, ?)`).run(
-      localRoot,
-      `users.${usernameA}`,
-      `users.${usernameB}`,
-    );
     deletePersistentClaim(namespaceA);
     deletePersistentClaim(namespaceB);
     const claimAPath = getPersistentClaimPath(namespaceA);

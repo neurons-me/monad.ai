@@ -1,5 +1,4 @@
 import assert from "assert";
-import { db } from "../src/Blockchain/db";
 import {
   appendSemanticMemory,
   readSemanticBranchForNamespace,
@@ -8,13 +7,7 @@ import {
 
 const NAMESPACE = "semantic-branch-reader.cleaker.me";
 
-function cleanupNamespace() {
-  db.prepare(`DELETE FROM semantic_memories WHERE namespace = ?`).run(NAMESPACE);
-}
-
 test("reads exact semantic branches without swallowing sibling prefixes", () => {
-  cleanupNamespace();
-
   const timestamp = Date.now();
   appendSemanticMemory({
     namespace: NAMESPACE,
@@ -46,6 +39,4 @@ test("reads exact semantic branches without swallowing sibling prefixes", () => 
     readSemanticValueForNamespace(NAMESPACE, "gui.pagebuilder.status"),
     "should-not-leak",
   );
-
-  cleanupNamespace();
 });

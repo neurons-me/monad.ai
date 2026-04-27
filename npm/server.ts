@@ -1,11 +1,10 @@
 import express from "express";
 import cors from "cors";
 import os from "os";
-import { getKernel } from "./src/kernel/manager.js";
+import { getKernel, getKernelStateDir } from "./src/kernel/manager.js";
 import { setupPersistence } from "./src/kernel/persist.js";
 import path from "path";
 import { createHash } from "crypto";
-import { db, DB_PATH } from "./src/Blockchain/db";
 import { appendBlock, getAllBlocks } from "./src/Blockchain/blockchain";
 import { getUsersForRootNamespace } from "./src/Blockchain/users";
 import { claimNamespace, openNamespace, rebuildProjectedNamespaceClaims } from "./src/claim/records";
@@ -13,7 +12,12 @@ import { ensureRootSemanticBootstrap } from "./src/claim/semanticBootstrap";
 import { getMemoriesForNamespace } from "./src/claim/replay";
 import { getClaim } from "./src/claim/records";
 import { isNamespaceWriteAuthorized, recordMemory } from "./src/claim/replay";
-import { appendSemanticMemory, listHostMemoryHistory, listSemanticMemoriesByRootNamespace } from "./src/claim/memoryStore";
+import {
+  appendSemanticMemory,
+  listHostMemoryHistory,
+  listSemanticMemoriesByNamespace,
+  listSemanticMemoriesByRootNamespace,
+} from "./src/claim/memoryStore";
 import {
   filterBlocksByNamespace,
   formatObserverRelationLabel,
@@ -1221,12 +1225,23 @@ app.get("/@*", async (req: express.Request, res: express.Response) => {
 // Commit a new semantic memory event (single or batch)
 app.post("/api/v1/commit", async (req, res) => {
   try {
-    const { events } = req.body;
-    if (!Array.isArray(events) || events.length === 0) {
+    const body = (req.body ?? {}) as Record<string, unknown>;
+    const rawEvents = Array.isArray(body.events)
+      ? body.events
+      : body.memory && typeof body.memory === "object"
+        ? [{
+            namespace: body.namespace,
+            ...(body.memory as Record<string, unknown>),
+            data: Object.prototype.hasOwnProperty.call(body.memory as Record<string, unknown>, "data")
+              ? (body.memory as Record<string, unknown>).data
+              : (body.memory as Record<string, unknown>).value,
+          }]
+        : [];
+    if (!rawEvents.length) {
       return res.status(400).json({ error: "No events provided" });
     }
     const results = [];
-    for (const event of events) {
+    for (const event of rawEvents) {
       // event: { namespace, path, operator, data, signature, expectedPrevHash, timestamp }
       try {
         const memory = appendSemanticMemory(event);
@@ -1235,7 +1250,12 @@ app.post("/api/v1/commit", async (req, res) => {
         results.push({ ok: false, error: String(err) });
       }
     }
-    return res.json({ results });
+    const first = results[0] && (results[0] as { ok: boolean; memory?: { hash?: string } });
+    return res.status(201).json({
+      ok: results.every((entry) => Boolean((entry as { ok?: boolean }).ok)),
+      hash: first?.memory?.hash || null,
+      results,
+    });
   } catch (err) {
     return res.status(500).json({ error: String(err) });
   }
@@ -1249,15 +1269,14 @@ app.get("/api/v1/sync", async (req, res) => {
     if (!namespace) {
       return res.status(400).json({ error: "Missing namespace" });
     }
-    // For now, fetch all semantic memories for the namespace (future: optimize by timestamp/hash)
-    // This demo assumes username and fingerprint are encoded in the namespace or query
     const username = String(req.query.username || "");
     const fingerprint = String(req.query.fingerprint || "");
     const limit = Number(req.query.limit || 2000);
-    const events = listHostMemoryHistory(namespace, username, fingerprint, limit).filter(
-      (e: { timestamp?: number }) => Number(e?.timestamp ?? 0) > since,
-    );
-    return res.json({ events });
+    const events = (username && fingerprint
+      ? listHostMemoryHistory(namespace, username, fingerprint, limit)
+      : listSemanticMemoriesByNamespace(namespace, { limit })
+    ).filter((e: { timestamp?: number }) => Number(e?.timestamp ?? 0) > since);
+    return res.json({ events, memories: events });
   } catch (err) {
     return res.status(500).json({ error: String(err) });
   }
@@ -1284,54 +1303,58 @@ app.get("/*", (req, res, next) => {
 getKernel();
 setupPersistence();
 
-app.listen(PORT, () => {
-  console.log(`\n🚀 Monad.ai daemon running at: http://localhost:${PORT}`);
-  console.log("\n∴ Material Surface");
-  console.log(`  - Ledger DB:      ${DB_PATH}`);
-  console.log("  - Give thought:   POST /        (append JSON into current namespace)");
-  console.log("  - Reach thought:  GET  /        (read current namespace surface)");
-  console.log("  - Read blocks:    GET  /blocks  (explicit block stream view)");
-  console.log("  - Provider boot:  GET  /__provider");
-  console.log("  - Provider read:  GET  /__provider/resolve?path=profile/name");
-  console.log("  - Provider GUI:   GET  /__provider/surface?route=/");
+if (!process.env.JEST_WORKER_ID) {
+  app.listen(PORT, () => {
+    console.log(`\n🚀 Monad.ai daemon running at: http://localhost:${PORT}`);
+    console.log("\n∴ Material Surface");
+    console.log(`  - State Dir:      ${getKernelStateDir()}`);
+    console.log("  - Give thought:   POST /        (append JSON into current namespace)");
+    console.log("  - Reach thought:  GET  /        (read current namespace surface)");
+    console.log("  - Read blocks:    GET  /blocks  (explicit block stream view)");
+    console.log("  - Provider boot:  GET  /__provider");
+    console.log("  - Provider read:  GET  /__provider/resolve?path=profile/name");
+    console.log("  - Provider GUI:   GET  /__provider/surface?route=/");
 
-  console.log("\n🔐 Claim Surface");
-  console.log("  - Claim space:    POST /claims       (forge claim record + encrypted noise)");
-  console.log("  - Open space:     POST /claims/open  (verify trinity -> recover noise)");
-  console.log("  - Kernel claim:   POST /me/kernel:claim/<full-namespace>");
-  console.log("  - Kernel open:    POST /me/kernel:open/<full-namespace>");
+    console.log("\n🔐 Claim Surface");
+    console.log("  - Claim space:    POST /claims       (forge claim record + encrypted noise)");
+    console.log("  - Open space:     POST /claims/open  (verify trinity -> recover noise)");
+    console.log("  - Kernel claim:   POST /me/kernel:claim/<full-namespace>");
+    console.log("  - Kernel open:    POST /me/kernel:open/<full-namespace>");
 
-  console.log("\n🌐 Routing / Namespaces");
-  console.log("  - Host header determines the chain namespace");
-  console.log("  - Examples:");
-  console.log("    • cleaker.me                  -> cleaker.me");
-  console.log("    • username.cleaker.me         -> username.cleaker.me");
-  console.log(`    • localhost (transport alias) -> ${LOCAL_NAMESPACE_ROOT}`);
-  console.log(`    • username.localhost          -> username.${LOCAL_NAMESPACE_ROOT} (local alias projection)`);
-  console.log("    • cleaker.me/@username        -> username.cleaker.me (path projection)");
-  console.log(`    • localhost/@username         -> username.${LOCAL_NAMESPACE_ROOT} (local alias projection)`);
-  console.log("    • cleaker.me/@a+b             -> cleaker.me (relation stays semantic, no DNS projection)");
-  console.log("    • cleaker.me/@a/@b            -> a.cleaker.me (target projects, relation stays semantic)");
-  console.log("    • ana.cleaker.me/profile?as=bella -> target=ana.cleaker.me, observer=bella.cleaker.me");
-  if (SELF_NODE_CONFIG) {
-    console.log("    • me://ana.cleaker.me[macbook]:read/profile -> local if selector matches this node tags");
-  }
+    console.log("\n🌐 Routing / Namespaces");
+    console.log("  - Host header determines the chain namespace");
+    console.log("  - Examples:");
+    console.log("    • cleaker.me                  -> cleaker.me");
+    console.log("    • username.cleaker.me         -> username.cleaker.me");
+    console.log(`    • localhost (transport alias) -> ${LOCAL_NAMESPACE_ROOT}`);
+    console.log(`    • username.localhost          -> username.${LOCAL_NAMESPACE_ROOT} (local alias projection)`);
+    console.log("    • cleaker.me/@username        -> username.cleaker.me (path projection)");
+    console.log(`    • localhost/@username         -> username.${LOCAL_NAMESPACE_ROOT} (local alias projection)`);
+    console.log("    • cleaker.me/@a+b             -> cleaker.me (relation stays semantic, no DNS projection)");
+    console.log("    • cleaker.me/@a/@b            -> a.cleaker.me (target projects, relation stays semantic)");
+    console.log("    • ana.cleaker.me/profile?as=bella -> target=ana.cleaker.me, observer=bella.cleaker.me");
+    if (SELF_NODE_CONFIG) {
+      console.log("    • me://ana.cleaker.me[macbook]:read/profile -> local if selector matches this node tags");
+    }
 
-  if (SELF_NODE_CONFIG) {
-    console.log("\n🪞 Self Mapping");
-    console.log(`  - Identity:       ${SELF_NODE_CONFIG.identity}`);
-    console.log(`  - Tags:           ${SELF_NODE_CONFIG.tags.join(", ") || "(none)"}`);
-    console.log(`  - Endpoint:       ${SELF_NODE_CONFIG.endpoint}`);
-    console.log(`  - Config Path:    ${SELF_NODE_CONFIG.configPath}`);
-  }
+    if (SELF_NODE_CONFIG) {
+      console.log("\n🪞 Self Mapping");
+      console.log(`  - Identity:       ${SELF_NODE_CONFIG.identity}`);
+      console.log(`  - Tags:           ${SELF_NODE_CONFIG.tags.join(", ") || "(none)"}`);
+      console.log(`  - Endpoint:       ${SELF_NODE_CONFIG.endpoint}`);
+      console.log(`  - Config Path:    ${SELF_NODE_CONFIG.configPath}`);
+    }
 
-  console.log("\n🔎 Namespace Reads");
-  console.log("  - Resolve path:   GET  /<any/path>   e.g. /profile/displayName");
-  console.log("    (Resolves within the chain namespace derived from host)");
+    console.log("\n🔎 Namespace Reads");
+    console.log("  - Resolve path:   GET  /<any/path>   e.g. /profile/displayName");
+    console.log("    (Resolves within the chain namespace derived from host)");
 
-  console.log("\n🕰 Legacy Extensions");
-  console.log("  - Claim username: POST /users");
-  console.log("  - Lookup user:    GET  /users/:username");
-  console.log("  - Enroll face:    POST /faces/enroll");
-  console.log("  - Match face:     POST /faces/match\n");
-});
+    console.log("\n🕰 Legacy Extensions");
+    console.log("  - Claim username: POST /users");
+    console.log("  - Lookup user:    GET  /users/:username");
+    console.log("  - Enroll face:    POST /faces/enroll");
+    console.log("  - Match face:     POST /faces/match\n");
+  });
+}
+
+export default app;

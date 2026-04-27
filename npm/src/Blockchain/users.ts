@@ -1,11 +1,9 @@
-// www/api/src/Blockchain/users.ts
-// -------------------------------------------------------------
-// Users Table Accessors (using shared SQLite db)
-// -------------------------------------------------------------
-import { db } from "./db";
-import {
-  normalizeNamespaceRootName,
-} from "../namespace/identity";
+import { getBlocksForIdentity } from "./blockchain";
+import { getClaim } from "../claim/records";
+import { listSemanticMemoriesByNamespace } from "../claim/memoryStore";
+import { getRootNamespace } from "../kernel/manager";
+import { normalizeNamespaceRootName } from "../namespace/identity";
+import { readJsonState, writeJsonState } from "../state/jsonStore.js";
 
 export type UserRow = {
   username: string;
@@ -19,87 +17,62 @@ export type ClaimUserResult =
   | { ok: true; user: UserRow }
   | { ok: false; error: "USERNAME_TAKEN" | "USERNAME_REQUIRED" | "IDENTITY_HASH_REQUIRED" | "PUBLIC_KEY_REQUIRED" };
 
-type ClaimProjectionRow = {
-  namespace: string;
-  identityHash: string;
-  publicKey: string | null;
-  createdAt: number;
-  updatedAt: number;
-};
-
-type RootUserPointerRow = {
-  namespace: string;
-  path: string;
-  data: string;
-  timestamp: number;
-};
+const LEGACY_USERS_FILE = "legacy-users.json";
 
 function normalizeUsername(raw: string) {
-  const u = String(raw || "").trim().toLowerCase();
-  return u;
+  return String(raw || "").trim().toLowerCase();
 }
 
-// -------------------------------------------------------------
-// GET ALL USERS
-// -------------------------------------------------------------
+function readLegacyUsers(): UserRow[] {
+  const rows = readJsonState<UserRow[]>(LEGACY_USERS_FILE, []);
+  return Array.isArray(rows) ? rows : [];
+}
+
+function writeLegacyUsers(rows: UserRow[]): void {
+  writeJsonState(LEGACY_USERS_FILE, rows);
+}
+
+function getProjectedUsersForConfiguredRoot(): UserRow[] {
+  return getUsersForRootNamespace(getRootNamespace());
+}
+
 export function getAllUsers(): UserRow[] {
-  return db
-    .prepare(
-      `
-      SELECT username, identityHash, publicKey, createdAt, updatedAt
-      FROM users
-      ORDER BY createdAt ASC
-    `
-    )
-    .all() as UserRow[];
+  const merged = new Map<string, UserRow>();
+
+  for (const user of [...readLegacyUsers(), ...getProjectedUsersForConfiguredRoot()]) {
+    if (!user.username) continue;
+    const current = merged.get(user.username);
+    if (!current || user.updatedAt >= current.updatedAt) {
+      merged.set(user.username, user);
+    }
+  }
+
+  return [...merged.values()].sort((a, b) => a.createdAt - b.createdAt);
 }
 
 export function getUsersForRootNamespace(rootNamespaceInput: string): UserRow[] {
   const rootNamespace = normalizeNamespaceRootName(rootNamespaceInput);
   if (!rootNamespace) return [];
 
-  const pointerRows = db
-    .prepare(
-      `
-      SELECT namespace, path, data, timestamp
-      FROM semantic_memories
-      WHERE path LIKE 'users.%'
-      ORDER BY id ASC
-    `
-    )
-    .all() as RootUserPointerRow[];
+  const rows = listSemanticMemoriesByNamespace(rootNamespace) as Array<{
+    path: string;
+    data: unknown;
+    timestamp: number;
+  }>;
 
+  const pointerRows = rows.filter((row) => /^users\.[a-z0-9_-]+$/i.test(row.path));
   const seen = new Set<string>();
   const users: UserRow[] = [];
 
   for (const row of pointerRows) {
-    const hostRoot = normalizeNamespaceRootName(row.namespace);
-    if (!hostRoot || hostRoot !== rootNamespace) continue;
-
-    const match = String(row.path || "").trim().match(/^users\.([a-z0-9_-]+)$/i);
-    const username = String(match?.[1] || "").trim().toLowerCase();
-    if (seen.has(username)) continue;
+    const match = row.path.match(/^users\.([a-z0-9_-]+)$/i);
+    const username = normalizeUsername(String(match?.[1] || ""));
+    if (!username || seen.has(username)) continue;
     seen.add(username);
 
-    let projectedNamespace = "";
-    try {
-      const parsed = JSON.parse(String(row.data || "{}"));
-      projectedNamespace = String(parsed?.__ptr || "").trim().toLowerCase();
-    } catch {
-      projectedNamespace = "";
-    }
-
-    const claim = projectedNamespace
-      ? (db
-          .prepare(
-            `
-            SELECT namespace, identityHash, publicKey, createdAt, updatedAt
-            FROM claims
-            WHERE namespace = ?
-          `,
-          )
-          .get(projectedNamespace) as ClaimProjectionRow | undefined)
-      : undefined;
+    const ptr = row.data as Record<string, unknown> | null;
+    const projectedNamespace = String((ptr as { __ptr?: unknown } | null)?.__ptr || "").trim().toLowerCase();
+    const claim = projectedNamespace ? getClaim(projectedNamespace) : undefined;
 
     users.push({
       username,
@@ -113,77 +86,46 @@ export function getUsersForRootNamespace(rootNamespaceInput: string): UserRow[] 
   return users;
 }
 
-// -------------------------------------------------------------
-// GET SINGLE USER
-// -------------------------------------------------------------
 export function getUser(username: string): UserRow | undefined {
-  const u = normalizeUsername(username);
-  if (!u) return undefined;
+  const normalized = normalizeUsername(username);
+  if (!normalized) return undefined;
 
-  return db
-    .prepare(
-      `
-      SELECT username, identityHash, publicKey, createdAt, updatedAt
-      FROM users
-      WHERE username = ?
-    `
-    )
-    .get(u) as UserRow | undefined;
+  return getAllUsers().find((user) => user.username === normalized);
 }
 
-// -------------------------------------------------------------
-// CLAIM USERNAME (insert new row)
-// -------------------------------------------------------------
 export function claimUser(
   username: string,
   identityHash: string,
-  publicKey: string
+  publicKey: string,
 ): ClaimUserResult {
-  const u = normalizeUsername(username);
-  const ih = String(identityHash || "").trim();
-  const pk = String(publicKey || "").trim();
+  const normalizedUsername = normalizeUsername(username);
+  const normalizedIdentityHash = String(identityHash || "").trim();
+  const normalizedPublicKey = String(publicKey || "").trim();
 
-  if (!u) return { ok: false, error: "USERNAME_REQUIRED" };
-  if (!ih) return { ok: false, error: "IDENTITY_HASH_REQUIRED" };
-  if (!pk) return { ok: false, error: "PUBLIC_KEY_REQUIRED" };
+  if (!normalizedUsername) return { ok: false, error: "USERNAME_REQUIRED" };
+  if (!normalizedIdentityHash) return { ok: false, error: "IDENTITY_HASH_REQUIRED" };
+  if (!normalizedPublicKey) return { ok: false, error: "PUBLIC_KEY_REQUIRED" };
 
-  const exists = db.prepare(`SELECT username FROM users WHERE username = ?`).get(u);
-  if (exists) {
+  if (getUser(normalizedUsername)) {
     return { ok: false, error: "USERNAME_TAKEN" };
   }
 
   const now = Date.now();
-  db.prepare(
-    `
-    INSERT INTO users (username, identityHash, publicKey, createdAt, updatedAt)
-    VALUES (?, ?, ?, ?, ?)
-  `
-  ).run(u, ih, pk, now, now);
-
-  const user = getUser(u);
-  // Should always exist after insert; but keep it safe.
-  return {
-    ok: true,
-    user: (user || { username: u, identityHash: ih, publicKey: pk, createdAt: now, updatedAt: now }) as UserRow,
+  const nextUser: UserRow = {
+    username: normalizedUsername,
+    identityHash: normalizedIdentityHash,
+    publicKey: normalizedPublicKey,
+    createdAt: now,
+    updatedAt: now,
   };
+
+  const users = readLegacyUsers();
+  users.push(nextUser);
+  writeLegacyUsers(users);
+
+  return { ok: true, user: nextUser };
 }
 
-// -------------------------------------------------------------
-// COUNT BLOCKS OWNED BY USER
-// -------------------------------------------------------------
 export function countBlocksForUser(identityHash: string) {
-  const ih = String(identityHash || "").trim();
-  if (!ih) return 0;
-
-  const row = db
-    .prepare(
-      `
-      SELECT COUNT(*) AS count
-      FROM blocks
-      WHERE identityHash = ?
-    `
-    )
-    .get(ih) as { count: number } | undefined;
-
-  return row?.count ?? 0;
+  return getBlocksForIdentity(identityHash).length;
 }

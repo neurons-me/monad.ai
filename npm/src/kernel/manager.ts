@@ -1,11 +1,19 @@
 import ME from "this.me";
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync } from "fs";
 import { resolve } from "path";
 
-const ME_STATE_DIR = resolve(process.cwd(), "me-state");
-const SNAPSHOT_PATH = resolve(ME_STATE_DIR, "snapshot.json");
+const DEFAULT_ME_STATE_DIR = resolve(process.cwd(), "me-state");
 
 let _kernel: InstanceType<typeof ME> | null = null;
+
+export function getKernelStateDir(): string {
+  const configured = String(process.env.ME_STATE_DIR || "").trim();
+  return configured ? resolve(configured) : DEFAULT_ME_STATE_DIR;
+}
+
+export function getKernelStatePath(...segments: string[]): string {
+  return resolve(getKernelStateDir(), ...segments);
+}
 
 export function getKernel(): InstanceType<typeof ME> {
   if (_kernel) return _kernel;
@@ -13,15 +21,16 @@ export function getKernel(): InstanceType<typeof ME> {
   const seed = process.env.ME_SEED;
   if (!seed) throw new Error("ME_SEED is required — set it in your environment before starting monad.ai");
 
-  mkdirSync(ME_STATE_DIR, { recursive: true });
+  mkdirSync(getKernelStateDir(), { recursive: true });
 
   _kernel = new ME(seed, {
-    store: new ME.DiskStore({ baseDir: ME_STATE_DIR }),
+    store: new ME.DiskStore({ baseDir: getKernelStateDir() }),
   });
 
-  if (existsSync(SNAPSHOT_PATH)) {
+  const snapshotPath = getKernelStatePath("snapshot.json");
+  if (existsSync(snapshotPath)) {
     try {
-      const raw = readFileSync(SNAPSHOT_PATH, "utf8");
+      const raw = readFileSync(snapshotPath, "utf8");
       _kernel.hydrate(JSON.parse(raw));
       console.log("[kernel] hydrated from snapshot");
     } catch (e) {
@@ -35,10 +44,11 @@ export function getKernel(): InstanceType<typeof ME> {
 export function saveSnapshot(): void {
   if (!_kernel) return;
   try {
-    mkdirSync(ME_STATE_DIR, { recursive: true });
+    const snapshotPath = getKernelStatePath("snapshot.json");
+    mkdirSync(getKernelStateDir(), { recursive: true });
     const snapshot = _kernel.exportSnapshot();
-    writeFileSync(SNAPSHOT_PATH, JSON.stringify(snapshot), "utf8");
-    console.log("[kernel] snapshot saved to", SNAPSHOT_PATH);
+    writeFileSync(snapshotPath, JSON.stringify(snapshot), "utf8");
+    console.log("[kernel] snapshot saved to", snapshotPath);
   } catch (e) {
     console.error("[kernel] snapshot save failed:", e);
   }
@@ -46,4 +56,30 @@ export function saveSnapshot(): void {
 
 export function kernelReady(): boolean {
   return _kernel !== null;
+}
+
+export function getRootNamespace(): string {
+  return String(process.env.ME_NAMESPACE || process.env.MONAD_SELF_IDENTITY || "localhost").trim().toLowerCase();
+}
+
+export function namespaceToKernelPrefix(namespace: string): string {
+  const ns = namespace.trim().toLowerCase();
+  const root = getRootNamespace();
+  if (ns === root) return "";
+  if (ns.endsWith(`.${root}`)) {
+    const username = ns.slice(0, -(root.length + 1)).split(".")[0] ?? ns;
+    return `users.${username}`;
+  }
+  // Unknown domain — not a managed namespace, do not assume identity
+  return "";
+}
+
+export function kernelPathFor(namespace: string, path: string): string {
+  const prefix = namespaceToKernelPrefix(namespace);
+  return prefix ? `${prefix}.${path}` : path;
+}
+
+export function resetKernelStateForTests(): void {
+  _kernel = null;
+  rmSync(getKernelStateDir(), { recursive: true, force: true });
 }

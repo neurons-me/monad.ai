@@ -1,6 +1,5 @@
-import { db } from "../Blockchain/db";
 import { normalizeNamespaceRootName } from "../namespace/identity";
-import { appendSemanticMemory } from "./memoryStore";
+import { appendSemanticMemory, readSemanticValueForNamespace } from "./memoryStore";
 import { ROOT_SCHEMA_SEEDS } from "./semanticCatalog";
 
 function stableStringify(value: unknown): string {
@@ -11,27 +10,6 @@ function stableStringify(value: unknown): string {
   return `{${keys.map((key) => `${JSON.stringify(key)}:${stableStringify(obj[key])}`).join(",")}}`;
 }
 
-function getLatestSemanticValue(namespace: string, path: string): unknown {
-  const row = db
-    .prepare(
-      `
-      SELECT data
-      FROM semantic_memories
-      WHERE namespace = ? AND path = ?
-      ORDER BY id DESC
-      LIMIT 1
-    `,
-    )
-    .get(namespace, path) as { data: string } | undefined;
-
-  if (!row) return undefined;
-  try {
-    return JSON.parse(String(row.data || "null"));
-  } catch {
-    return row.data;
-  }
-}
-
 function ensureSemanticMemory(
   namespace: string,
   path: string,
@@ -39,18 +17,12 @@ function ensureSemanticMemory(
   operator: string = "=",
   timestamp: number,
 ): boolean {
-  const latest = getLatestSemanticValue(namespace, path);
+  const latest = readSemanticValueForNamespace(namespace, path);
   if (typeof latest !== "undefined" && stableStringify(latest) === stableStringify(data)) {
     return false;
   }
 
-  appendSemanticMemory({
-    namespace,
-    path,
-    operator,
-    data,
-    timestamp,
-  });
+  appendSemanticMemory({ namespace, path, operator, data, timestamp });
   return true;
 }
 
@@ -59,8 +31,8 @@ export function ensureRootSemanticBootstrap(rootNamespaceInput: string): number 
   if (!rootNamespace) return 0;
 
   const timestamp = Date.now();
-
   let inserted = 0;
+
   for (const seed of ROOT_SCHEMA_SEEDS) {
     if (ensureSemanticMemory(rootNamespace, seed.path, seed.data, seed.operator || "=", timestamp)) {
       inserted += 1;
