@@ -5,7 +5,7 @@ import { getKernel, getKernelStateDir } from "./src/kernel/manager.js";
 import { setupPersistence } from "./src/kernel/persist.js";
 import path from "path";
 import { createHash } from "crypto";
-import { appendBlock, getAllBlocks } from "./src/Blockchain/blockchain";
+import { getAllBlocks } from "./src/Blockchain/blockchain";
 import { getUsersForRootNamespace } from "./src/Blockchain/users";
 import { claimNamespace, openNamespace, rebuildProjectedNamespaceClaims } from "./src/claim/records";
 import { ensureRootSemanticBootstrap } from "./src/claim/semanticBootstrap";
@@ -1061,7 +1061,6 @@ app.post("/", async (req: express.Request, res: express.Response) => {
     }));
   }
 
-  const blockId = crypto.randomUUID();
   const timestamp = Date.now();
   const namespace = resolvedNamespace;
   const claim = getClaim(namespace);
@@ -1084,28 +1083,28 @@ app.post("/", async (req: express.Request, res: express.Response) => {
     ? claim.identityHash
     : String((body as any).identityHash || "").trim();
 
-  const entry = await appendBlock({
-    blockId,
-    timestamp,
-    namespace,
-    identityHash: blockIdentityHash,
-    expression: body.expression || "",
-    json: body,
-  });
-
-  recordMemory({
+  const entry = recordMemory({
     namespace,
     payload: body,
     identityHash: blockIdentityHash,
     timestamp,
   });
+  if (!entry) {
+    return res.status(400).json(createErrorEnvelope(target, {
+      error: "INVALID_MEMORY_INPUT",
+    }));
+  }
 
-  console.log("🧱 New Ledger Block:");
+  console.log("🧠 New Memory Event:");
   console.log(JSON.stringify(entry, null, 2));
   const writeTarget = buildNormalizedTarget(req, namespace, "write", "");
   return res.json(createEnvelope(writeTarget, {
-    blockId,
-    timestamp,
+    memoryHash: entry?.hash || null,
+    prevMemoryHash: entry?.prevHash || null,
+    namespace,
+    path: entry?.path || String((body as any).expression || "").trim(),
+    operator: entry?.operator ?? null,
+    timestamp: entry?.timestamp || timestamp,
   }));
 });
 
@@ -1123,7 +1122,7 @@ app.get("/", async (req: express.Request, res: express.Response) => {
 
   let blocks = filterBlocksByNamespace(all, chainNs);
   if (identityHash) {
-    blocks = blocks.filter((b: any) => String(b?.identityHash || "") === identityHash);
+    blocks = blocks.filter((b: any) => String(b?.authorIdentityHash || "") === identityHash);
   }
 
   // newest-first and limit
@@ -1155,7 +1154,7 @@ app.get("/blocks", async (req: express.Request, res: express.Response) => {
   const all = await getAllBlocks();
   let blocks = filterBlocksByNamespace(all, ns);
   if (identityHash) {
-    blocks = blocks.filter((b: any) => String(b?.identityHash || "") === identityHash);
+    blocks = blocks.filter((b: any) => String(b?.authorIdentityHash || "") === identityHash);
   }
 
   blocks = blocks
@@ -1202,7 +1201,7 @@ app.get("/@*", async (req: express.Request, res: express.Response) => {
 
   let blocks = filterBlocksByNamespace(all, chainNs);
   if (identityHash) {
-    blocks = blocks.filter((b: any) => String(b?.identityHash || "") === identityHash);
+    blocks = blocks.filter((b: any) => String(b?.authorIdentityHash || "") === identityHash);
   }
 
   blocks = blocks
@@ -1351,9 +1350,7 @@ if (!process.env.JEST_WORKER_ID) {
 
     console.log("\n🕰 Legacy Extensions");
     console.log("  - Claim username: POST /users");
-    console.log("  - Lookup user:    GET  /users/:username");
-    console.log("  - Enroll face:    POST /faces/enroll");
-    console.log("  - Match face:     POST /faces/match\n");
+    console.log("  - Lookup user:    GET  /users/:username\n");
   });
 }
 

@@ -28,13 +28,13 @@ This means:
 - Reality exists before identity
 
 ### 3. Universal Ledger
-Monad.ai stores facts as immutable blocks in local state files plus the `.me` kernel:
+Monad.ai stores facts in the append-only memory log of the `.me` kernel:
 
-- `POST /` → append a block to the ledger
-- `GET /` / `GET /blocks` → read blocks (filterable by namespace, identityHash, limit)
+- `POST /` → append a memory event to the kernel log
+- `GET /` / `GET /blocks` → read block-shaped projections of that memory log (filterable by namespace, identityHash, limit)
 - `GET /@*` → same as above, but with explicit selector in the path
 
-Each block is stored as JSON and scoped to a namespace.
+There is no parallel blockchain DB or JSON ledger. `/blocks` is a view over kernel memories scoped to a namespace.
 
 ### 4. Semantic Path Resolution
 A catch‑all route (`GET /*`) resolves semantic paths such as:
@@ -45,22 +45,20 @@ A catch‑all route (`GET /*`) resolves semantic paths such as:
 ```
 
 This works by:
-1. Reading blocks in the resolved namespace
+1. Reading semantic memories in the resolved namespace
 2. Folding them into a state tree (newest value wins)
 3. Returning the value at the requested path
 
 This is what turns the daemon from “just a ledger” into a **language**.
 
-### 5. Identity & Biometrics
+### 5. Identity
 The server also exposes identity primitives:
 - `POST /users` — claim a username
 - `GET /users/:username` — query user data
-- `POST /faces/enroll` — store face embeddings
-- `POST /faces/match` — cosine similarity matching
 
 ### 6. Data Layer
 - `.me` kernel + `DiskStore` for semantic state
-- Snapshot + local JSON state files under `me-state/`
+- Snapshot + kernel disk state under `me-state/`
 - Persistent claim bundles on disk
 - No SQLite dependency in the runtime path
 

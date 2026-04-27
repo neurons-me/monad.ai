@@ -1,9 +1,8 @@
 import { getBlocksForIdentity } from "./blockchain";
 import { getClaim } from "../claim/records";
-import { listSemanticMemoriesByNamespace } from "../claim/memoryStore";
+import { appendSemanticMemory, buildSemanticTreeForNamespace, listSemanticMemoriesByNamespace } from "../claim/memoryStore";
 import { getRootNamespace } from "../kernel/manager";
-import { normalizeNamespaceRootName } from "../namespace/identity";
-import { readJsonState, writeJsonState } from "../state/jsonStore.js";
+import { composeProjectedNamespace, normalizeNamespaceRootName } from "../namespace/identity";
 
 export type UserRow = {
   username: string;
@@ -17,19 +16,8 @@ export type ClaimUserResult =
   | { ok: true; user: UserRow }
   | { ok: false; error: "USERNAME_TAKEN" | "USERNAME_REQUIRED" | "IDENTITY_HASH_REQUIRED" | "PUBLIC_KEY_REQUIRED" };
 
-const LEGACY_USERS_FILE = "legacy-users.json";
-
 function normalizeUsername(raw: string) {
   return String(raw || "").trim().toLowerCase();
-}
-
-function readLegacyUsers(): UserRow[] {
-  const rows = readJsonState<UserRow[]>(LEGACY_USERS_FILE, []);
-  return Array.isArray(rows) ? rows : [];
-}
-
-function writeLegacyUsers(rows: UserRow[]): void {
-  writeJsonState(LEGACY_USERS_FILE, rows);
 }
 
 function getProjectedUsersForConfiguredRoot(): UserRow[] {
@@ -37,17 +25,24 @@ function getProjectedUsersForConfiguredRoot(): UserRow[] {
 }
 
 export function getAllUsers(): UserRow[] {
-  const merged = new Map<string, UserRow>();
+  return getProjectedUsersForConfiguredRoot().sort((a, b) => a.createdAt - b.createdAt);
+}
 
-  for (const user of [...readLegacyUsers(), ...getProjectedUsersForConfiguredRoot()]) {
-    if (!user.username) continue;
-    const current = merged.get(user.username);
-    if (!current || user.updatedAt >= current.updatedAt) {
-      merged.set(user.username, user);
-    }
+function readProjectedUsersMetadata(rootNamespace: string): Record<string, Record<string, unknown>> {
+  const tree = buildSemanticTreeForNamespace(rootNamespace) as Record<string, unknown>;
+  const usersBranch = tree.users as Record<string, unknown> | undefined;
+  const records: Record<string, Record<string, unknown>> = {};
+
+  if (!usersBranch || typeof usersBranch !== "object" || Array.isArray(usersBranch)) {
+    return records;
   }
 
-  return [...merged.values()].sort((a, b) => a.createdAt - b.createdAt);
+  for (const [username, record] of Object.entries(usersBranch)) {
+    if (!record || typeof record !== "object" || Array.isArray(record)) continue;
+    records[username] = record as Record<string, unknown>;
+  }
+
+  return records;
 }
 
 export function getUsersForRootNamespace(rootNamespaceInput: string): UserRow[] {
@@ -63,6 +58,7 @@ export function getUsersForRootNamespace(rootNamespaceInput: string): UserRow[] 
   const pointerRows = rows.filter((row) => /^users\.[a-z0-9_-]+$/i.test(row.path));
   const seen = new Set<string>();
   const users: UserRow[] = [];
+  const projectedMetadata = readProjectedUsersMetadata(rootNamespace);
 
   for (const row of pointerRows) {
     const match = row.path.match(/^users\.([a-z0-9_-]+)$/i);
@@ -71,15 +67,17 @@ export function getUsersForRootNamespace(rootNamespaceInput: string): UserRow[] 
     seen.add(username);
 
     const ptr = row.data as Record<string, unknown> | null;
-    const projectedNamespace = String((ptr as { __ptr?: unknown } | null)?.__ptr || "").trim().toLowerCase();
+    const projectedNamespace = String((ptr as { __ptr?: unknown } | null)?.__ptr || "").trim().toLowerCase()
+      || composeProjectedNamespace(username, rootNamespace);
     const claim = projectedNamespace ? getClaim(projectedNamespace) : undefined;
+    const metadata = projectedMetadata[username] || {};
 
     users.push({
       username,
-      identityHash: String(claim?.identityHash || "").trim(),
-      publicKey: String(claim?.publicKey || "").trim(),
-      createdAt: Number(claim?.createdAt || row.timestamp || 0),
-      updatedAt: Number(claim?.updatedAt || row.timestamp || 0),
+      identityHash: String(claim?.identityHash || metadata.identityHash || "").trim(),
+      publicKey: String(claim?.publicKey || metadata.publicKey || "").trim(),
+      createdAt: Number(claim?.createdAt || metadata.createdAt || row.timestamp || 0),
+      updatedAt: Number(claim?.updatedAt || metadata.updatedAt || row.timestamp || 0),
     });
   }
 
@@ -111,6 +109,8 @@ export function claimUser(
   }
 
   const now = Date.now();
+  const rootNamespace = getRootNamespace();
+  const projectedNamespace = composeProjectedNamespace(normalizedUsername, rootNamespace);
   const nextUser: UserRow = {
     username: normalizedUsername,
     identityHash: normalizedIdentityHash,
@@ -119,9 +119,37 @@ export function claimUser(
     updatedAt: now,
   };
 
-  const users = readLegacyUsers();
-  users.push(nextUser);
-  writeLegacyUsers(users);
+  appendSemanticMemory({
+    namespace: rootNamespace,
+    path: `users.${normalizedUsername}`,
+    operator: "__",
+    data: { __ptr: projectedNamespace },
+    timestamp: now,
+  });
+  appendSemanticMemory({
+    namespace: rootNamespace,
+    path: `users.${normalizedUsername}.identityHash`,
+    data: normalizedIdentityHash,
+    timestamp: now,
+  });
+  appendSemanticMemory({
+    namespace: rootNamespace,
+    path: `users.${normalizedUsername}.publicKey`,
+    data: normalizedPublicKey,
+    timestamp: now,
+  });
+  appendSemanticMemory({
+    namespace: rootNamespace,
+    path: `users.${normalizedUsername}.createdAt`,
+    data: now,
+    timestamp: now,
+  });
+  appendSemanticMemory({
+    namespace: rootNamespace,
+    path: `users.${normalizedUsername}.updatedAt`,
+    data: now,
+    timestamp: now,
+  });
 
   return { ok: true, user: nextUser };
 }

@@ -229,14 +229,14 @@ function getLegacyMemoriesForNamespace(namespace: string): ReplayMemory[] {
     .sort((a, b) => a.timestamp - b.timestamp);
 }
 
-export function recordMemory(input: RecordMemoryInput): void {
+export function recordMemory(input: RecordMemoryInput): SemanticMemoryRow | null {
   const namespace = normalizeNamespaceIdentity(input.namespace);
-  if (!namespace) return;
+  if (!namespace) return null;
 
   const replay = normalizeLegacyReplayMemory(input.payload);
-  if (!replay) return;
+  if (!replay) return null;
 
-  appendSemanticMemory({
+  return appendSemanticMemory({
     namespace,
     path: replay.path,
     operator: replay.operator,

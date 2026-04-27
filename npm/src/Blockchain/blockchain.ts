@@ -1,53 +1,75 @@
-import { readJsonState, writeJsonState } from "../state/jsonStore.js";
+import { listSemanticMemoriesByRootNamespace, type SemanticMemoryRow } from "../claim/memoryStore.js";
+import { getClaim } from "../claim/records.js";
+import { getRootNamespace } from "../kernel/manager.js";
+import { composeProjectedNamespace, normalizeNamespaceIdentity } from "../namespace/identity.js";
 
 export type LedgerBlockRow = {
-  blockId: string;
+  memoryHash: string;
+  prevMemoryHash: string;
   timestamp: number;
   namespace: string;
-  identityHash: string;
-  expression: string;
-  json: unknown;
+  path: string;
+  operator: string | null;
+  value: unknown;
+  authorIdentityHash?: string;
+  authorPublicKey?: string;
+  signature?: string | null;
 };
 
-const BLOCKS_STATE_FILE = "ledger-blocks.json";
+function resolveProjectedNamespaceFromRootMemory(row: SemanticMemoryRow): string {
+  const ptr = row.data as { __ptr?: unknown } | null;
+  const fromPtr = String(ptr?.__ptr || "").trim().toLowerCase();
+  if (fromPtr) return normalizeNamespaceIdentity(fromPtr);
 
-function readBlocks(): LedgerBlockRow[] {
-  const rows = readJsonState<LedgerBlockRow[]>(BLOCKS_STATE_FILE, []);
-  return Array.isArray(rows) ? rows : [];
+  const match = String(row.path || "").match(/^users\.([a-z0-9_-]+)/i);
+  const username = String(match?.[1] || "").trim().toLowerCase();
+  if (!username) return "";
+
+  return composeProjectedNamespace(username, getRootNamespace());
 }
 
-function writeBlocks(rows: LedgerBlockRow[]): void {
-  writeJsonState(BLOCKS_STATE_FILE, rows);
-}
+function resolveAuthor(row: SemanticMemoryRow): {
+  authorIdentityHash?: string;
+  authorPublicKey?: string;
+} {
+  const projectedNamespace = row.namespace === getRootNamespace()
+    ? resolveProjectedNamespaceFromRootMemory(row)
+    : normalizeNamespaceIdentity(row.namespace);
+  const claim = projectedNamespace ? getClaim(projectedNamespace) : undefined;
+  if (!claim) return {};
 
-export function appendBlock(block: Partial<LedgerBlockRow>) {
-  const row: LedgerBlockRow = {
-    blockId: String(block.blockId || "").trim(),
-    timestamp: Number(block.timestamp || Date.now()),
-    namespace: String(block.namespace || "").trim().toLowerCase(),
-    identityHash: String(block.identityHash || "").trim(),
-    expression: String(block.expression || "").trim(),
-    json: block.json ?? block,
+  return {
+    authorIdentityHash: String(claim.identityHash || "").trim() || undefined,
+    authorPublicKey: String(claim.publicKey || "").trim() || undefined,
   };
+}
 
-  const rows = readBlocks();
-  rows.push(row);
-  writeBlocks(rows);
-  return { ok: true, blockId: row.blockId };
+function semanticRowToBlock(row: SemanticMemoryRow): LedgerBlockRow {
+  return {
+    memoryHash: String(row.hash || ""),
+    prevMemoryHash: String(row.prevHash || ""),
+    timestamp: Number(row.timestamp || 0),
+    namespace: normalizeNamespaceIdentity(row.namespace),
+    path: String(row.path || ""),
+    operator: row.operator ?? null,
+    value: row.data,
+    signature: row.signature ?? null,
+    ...resolveAuthor(row),
+  };
 }
 
 export function getAllBlocks(): LedgerBlockRow[] {
-  return readBlocks();
+  return listSemanticMemoriesByRootNamespace(getRootNamespace(), { limit: 100_000 }).map(semanticRowToBlock);
 }
 
 export function getBlocksForIdentity(identityHash: string): LedgerBlockRow[] {
   const target = String(identityHash || "").trim();
   if (!target) return [];
-  return readBlocks().filter((row) => row.identityHash === target);
+  return getAllBlocks().filter((row) => String(row.authorIdentityHash || "") === target);
 }
 
 export function getBlocksForNamespace(namespace: string): LedgerBlockRow[] {
-  const target = String(namespace || "").trim().toLowerCase();
+  const target = normalizeNamespaceIdentity(namespace);
   if (!target) return [];
-  return readBlocks().filter((row) => row.namespace === target);
+  return getAllBlocks().filter((row) => row.namespace === target);
 }
