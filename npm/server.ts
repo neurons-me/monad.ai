@@ -86,7 +86,7 @@ const SELF_NODE_CONFIG = loadSelfNodeConfig({
   port: PORT,
 });
 const LOCAL_NAMESPACE_ROOT = normalizeNamespaceIdentity(
-  SELF_NODE_CONFIG?.identity || "localhost",
+  SELF_NODE_CONFIG?.identity || process.env.ME_NAMESPACE || NODE_HOSTNAME,
 );
 const app = express();
 app.set("trust proxy", true);
@@ -588,7 +588,7 @@ const resolveBridgeHandler = async (req: express.Request, res: express.Response)
   const rawTarget = String((req.query as any)?.target || "").trim();
   const decodedTarget = rawTarget ? decodeURIComponent(rawTarget) : "";
   const parsed = parseBridgeTarget(decodedTarget);
-  const requestHost = resolveTransportHost(req) || NODE_HOSTNAME || "localhost";
+  const requestHost = resolveTransportHost(req) || NODE_HOSTNAME || "unknown-host";
   const relation = resolveObserverRelation(req);
 
   if (!parsed) {
@@ -1325,10 +1325,10 @@ if (!process.env.JEST_WORKER_ID) {
     console.log("  - Examples:");
     console.log("    • cleaker.me                  -> cleaker.me");
     console.log("    • username.cleaker.me         -> username.cleaker.me");
-    console.log(`    • localhost (transport alias) -> ${LOCAL_NAMESPACE_ROOT}`);
-    console.log(`    • username.localhost          -> username.${LOCAL_NAMESPACE_ROOT} (local alias projection)`);
+    console.log(`    • localhost (loopback alias)  -> ${LOCAL_NAMESPACE_ROOT}`);
+    console.log(`    • username.localhost          -> username.${LOCAL_NAMESPACE_ROOT} (loopback alias projection)`);
     console.log("    • cleaker.me/@username        -> username.cleaker.me (path projection)");
-    console.log(`    • localhost/@username         -> username.${LOCAL_NAMESPACE_ROOT} (local alias projection)`);
+    console.log(`    • localhost/@username         -> username.${LOCAL_NAMESPACE_ROOT} (loopback alias projection)`);
     console.log("    • cleaker.me/@a+b             -> cleaker.me (relation stays semantic, no DNS projection)");
     console.log("    • cleaker.me/@a/@b            -> a.cleaker.me (target projects, relation stays semantic)");
     console.log("    • ana.cleaker.me/profile?as=bella -> target=ana.cleaker.me, observer=bella.cleaker.me");

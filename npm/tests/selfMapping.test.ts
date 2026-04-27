@@ -104,8 +104,8 @@ describe("self mapping", () => {
       });
 
       expect(loaded).not.toBeNull();
-      expect(loaded?.identity).toMatch(/^monad-[a-f0-9]{8}\.local$/);
-      expect(loaded?.endpoint).toBe("http://localhost:8161");
+      expect(loaded?.identity).toBe("suis-macbook-air.local");
+      expect(loaded?.endpoint).toBe("http://suis-macbook-air.local:8161");
       expect(loaded?.configPath).toBe(path.join(cwd, "env/self.json"));
       expect(env.MONAD_SELF_IDENTITY).toBe(loaded?.identity);
       expect(fs.existsSync(path.join(cwd, "env/self.json"))).toBe(true);

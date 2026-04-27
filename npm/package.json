@@ -7,7 +7,7 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch server.ts",
-    "build": "tsc",
+    "build": "tsc && node --input-type=commonjs -e \"require('fs').writeFileSync('dist/package.json', JSON.stringify({ type: 'commonjs' }, null, 2) + '\\n')\"",
     "start": "tsx server.ts",
     "test": "jest --runInBand --colors",
     "test:claims": "tsx tests/claim_test_verification.ts",

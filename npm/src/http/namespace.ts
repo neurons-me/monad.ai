@@ -23,16 +23,27 @@ export function createRawObserverRelation(): ObserverRelation {
     mode: "raw",
     value: null,
     observer: null,
-    namespace: null,
+  namespace: null,
   };
 }
 
+function firstHeaderValue(raw: string | string[] | undefined): string {
+  const value = Array.isArray(raw) ? raw[0] : raw;
+  return String(value || "").split(",")[0].trim();
+}
+
+function readForwardedHost(req: express.Request): string {
+  const forwarded = firstHeaderValue(req.headers.forwarded as string | string[] | undefined);
+  if (forwarded) {
+    const match = forwarded.match(/(?:^|;|\s)host="?([^;,\s"]+)"?/i);
+    if (match?.[1]) return match[1].trim();
+  }
+
+  return firstHeaderValue(req.headers["x-forwarded-host"]);
+}
+
 export function resolveHostNamespace(req: express.Request) {
-  const xfHost = req.headers["x-forwarded-host"];
-  const hostHeaderRaw =
-    (Array.isArray(xfHost) ? xfHost[0] : xfHost) ||
-    req.headers.host ||
-    "";
+  const hostHeaderRaw = readForwardedHost(req) || firstHeaderValue(req.headers.host) || "";
 
   const first = String(hostHeaderRaw).split(",")[0].trim();
   const noProto = first.replace(/^https?:\/\//i, "");
@@ -41,9 +52,7 @@ export function resolveHostNamespace(req: express.Request) {
 }
 
 export function resolveTransportHost(req: express.Request) {
-  const hostHeaderRaw = Array.isArray(req.headers.host)
-    ? req.headers.host[0]
-    : req.headers.host || "";
+  const hostHeaderRaw = firstHeaderValue(req.headers.host);
   const first = String(hostHeaderRaw).split(",")[0].trim();
   const noProto = first.replace(/^https?:\/\//i, "");
   const hostnameOnly = noProto.split(":")[0].trim();

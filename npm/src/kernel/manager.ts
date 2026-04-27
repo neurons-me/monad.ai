@@ -1,6 +1,8 @@
 import ME from "this.me";
+import os from "os";
 import { readFileSync, writeFileSync, existsSync, mkdirSync, rmSync } from "fs";
 import { resolve } from "path";
+import { normalizeNamespaceRootName } from "../namespace/identity.js";
 
 const DEFAULT_ME_STATE_DIR = resolve(process.cwd(), "me-state");
 
@@ -59,7 +61,14 @@ export function kernelReady(): boolean {
 }
 
 export function getRootNamespace(): string {
-  return String(process.env.ME_NAMESPACE || process.env.MONAD_SELF_IDENTITY || "localhost").trim().toLowerCase();
+  const explicit = String(
+    process.env.ME_NAMESPACE ||
+      process.env.MONAD_SELF_IDENTITY ||
+      process.env.MONAD_SELF_HOSTNAME ||
+      os.hostname() ||
+      "",
+  ).trim();
+  return normalizeNamespaceRootName(explicit) || "unknown";
 }
 
 export function namespaceToKernelPrefix(namespace: string): string {

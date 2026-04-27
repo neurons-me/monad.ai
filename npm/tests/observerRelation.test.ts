@@ -33,6 +33,25 @@ function makeRequest(input: {
 describe("observer relation routing", () => {
   const localRoot = normalizeNamespaceRootName("localhost");
 
+  it("prefers the forwarded public host over the proxy host", () => {
+    const req = {
+      headers: {
+        host: "netget.site",
+        "x-forwarded-host": "cleaker.me",
+      },
+      method: "GET",
+      path: "/profile",
+      query: {},
+      body: {},
+    } as any;
+
+    expect(resolveNamespace(req)).toBe("cleaker.me");
+
+    const target = normalizeHttpRequestToMeTarget(req);
+    expect(target.namespace).toBe("cleaker.me");
+    expect(target.nrp).toBe("me://cleaker.me:read/profile");
+  });
+
   it("keeps the target namespace atomic and projects ?as onto the observer namespace", () => {
     const req = makeRequest({
       host: "ana.cleaker.me",

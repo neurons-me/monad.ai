@@ -105,7 +105,14 @@ function normalizeNamespace(input: unknown) {
   return normalizeNamespaceIdentity(input);
 }
 
-function generateSelfIdentity() {
+function generateSelfIdentity(hostname: string) {
+  const normalizedHostname = normalizeToken(hostname);
+  if (normalizedHostname) {
+    return normalizedHostname.includes(".")
+      ? normalizedHostname
+      : `${normalizedHostname}.local`;
+  }
+
   return `monad-${crypto.randomBytes(4).toString("hex")}.local`;
 }
 
@@ -119,11 +126,18 @@ function ensureSelfIdentityConfig(input: {
   const explicitIdentity = normalizeNamespace(input.env.MONAD_SELF_IDENTITY || input.fileConfig.identity);
   if (explicitIdentity) return input.fileConfig;
 
+  const normalizedHostname = normalizeToken(input.hostname);
+  const defaultEndpointHost = normalizedHostname
+    ? normalizedHostname.includes(".")
+      ? normalizedHostname
+      : `${normalizedHostname}.local`
+    : "localhost";
+
   const generated = {
     ...input.fileConfig,
-    identity: generateSelfIdentity(),
+    identity: generateSelfIdentity(input.hostname),
     endpoint: String(
-      input.env.MONAD_SELF_ENDPOINT || input.fileConfig.endpoint || `http://localhost:${input.port}`,
+      input.env.MONAD_SELF_ENDPOINT || input.fileConfig.endpoint || `http://${defaultEndpointHost}:${input.port}`,
     ).trim(),
     hostname: String(input.fileConfig.hostname || input.hostname || "").trim() || String(input.hostname || ""),
     tags: Array.isArray(input.fileConfig.tags) && input.fileConfig.tags.length > 0
@@ -449,8 +463,14 @@ export function loadSelfNodeConfig(input: {
   const identity = normalizeNamespace(input.env.MONAD_SELF_IDENTITY || fileConfig.identity);
   if (!identity) return null;
 
+  const normalizedHostname = normalizeToken(input.hostname);
+  const defaultEndpointHost = normalizedHostname
+    ? normalizedHostname.includes(".")
+      ? normalizedHostname
+      : `${normalizedHostname}.local`
+    : "localhost";
   const endpoint = String(
-    input.env.MONAD_SELF_ENDPOINT || fileConfig.endpoint || `http://localhost:${input.port}`,
+    input.env.MONAD_SELF_ENDPOINT || fileConfig.endpoint || `http://${defaultEndpointHost}:${input.port}`,
   ).trim();
   const hostname = String(fileConfig.hostname || input.hostname || "").trim() || String(input.hostname || "");
   const tags = uniq([

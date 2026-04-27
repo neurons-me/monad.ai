@@ -1,3 +1,4 @@
+import os from "os";
 import { composeNamespace, parseNamespaceExpression } from "cleaker";
 
 export interface NamespaceIdentityParts {
@@ -14,6 +15,14 @@ function normalizeRawNamespace(input: unknown): string {
 
 function stripPort(raw: string): string {
   return String(raw || "").trim().toLowerCase().replace(/:\d+$/i, "");
+}
+
+function normalizeHostLike(raw: string): string {
+  const value = stripPort(raw)
+    .replace(/[^a-z0-9._-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+  return value;
 }
 
 function isLoopbackishHost(raw: string): boolean {
@@ -46,12 +55,21 @@ function tryParseNamespace(raw: string) {
 
 function resolveLocalNamespaceRoot(): string {
   const configured = normalizeRawNamespace(
-    process.env.MONAD_LOCAL_ALIAS_ROOT || process.env.MONAD_SELF_IDENTITY || "",
+    process.env.MONAD_LOCAL_ALIAS_ROOT ||
+      process.env.ME_NAMESPACE ||
+      process.env.MONAD_SELF_IDENTITY ||
+      process.env.MONAD_SELF_HOSTNAME ||
+      "",
   );
   if (configured) {
     const parsed = tryParseNamespace(configured);
     const constant = stripPort(parsed?.constant || configured);
     if (constant) return constant;
+  }
+
+  const host = normalizeHostLike(String(os.hostname() || ""));
+  if (host) {
+    return host.includes(".") ? host : `${host}.local`;
   }
 
   return DEFAULT_LOCAL_NAMESPACE_ROOT;
@@ -117,10 +135,7 @@ export function isProjectableNamespaceRoot(input: unknown): boolean {
   const parsed = tryParseNamespace(raw);
   if (parsed) return !parsed.prefix;
 
-  const parts = raw.split(".").filter(Boolean);
-  if (parts.length === 1 && parts[0] === "localhost") return true;
-  if (parts.length === 2 && parts[1] === "localhost") return false;
-  return parts.length === 2;
+  return Boolean(normalizeNamespaceConstant(raw));
 }
 
 export function composeProjectedNamespace(username: string, rootNamespace: string): string {
