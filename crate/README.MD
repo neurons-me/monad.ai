@@ -1,7 +1,7 @@
 ## Monad.ai
-**.me** defines identity.
-**monad.ai** computes it.
+**.me** defines identity and expressions.
+**monad.ai** serves the **namespace.**
 
-###### Experimental, please use node.js for a more stable version.
+###### Please use node.js.
 
 **neurons.me**

@@ -5,7 +5,7 @@ import {
   normalizeNamespaceConstant,
   normalizeNamespaceIdentity,
   parseNamespaceIdentityParts,
-} from "../namespace/identity";
+} from "../namespace/identity.js";
 
 export type ObserverRelationMode = "raw" | "self" | "observer" | "view";
 

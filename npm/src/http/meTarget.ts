@@ -5,7 +5,7 @@ import {
   resolveObserverRelation,
   resolveTransportHost,
   type ObserverRelation,
-} from "./namespace";
+} from "./namespace.js";
 
 export type MeOperationKind = "read" | "write" | "claim" | "open";
 

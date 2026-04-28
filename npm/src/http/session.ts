@@ -6,7 +6,7 @@ import {
   type RevokeHostRequest,
   type SessionNonceRequest,
   type VerifyHostSessionRequest,
-} from "../claim/handshake.types";
+} from "../claim/handshake.types.js";
 import {
   appendSemanticMemory,
   consumeSessionNonce,
@@ -15,11 +15,11 @@ import {
   listHostMemoryHistory,
   listHostsByNamespace,
   rebuildAuthorizedHostsProjection,
-} from "../claim/memoryStore";
-import { normalizeHttpRequestToMeTarget } from "./meTarget";
-import { createEnvelope, createErrorEnvelope } from "./envelope";
-import { composeProjectedNamespace } from "../namespace/identity";
-import { resolveNamespace, resolveNamespaceProjectionRoot } from "./namespace";
+} from "../claim/memoryStore.js";
+import { normalizeHttpRequestToMeTarget } from "./meTarget.js";
+import { createEnvelope, createErrorEnvelope } from "./envelope.js";
+import { composeProjectedNamespace } from "../namespace/identity.js";
+import { resolveNamespace, resolveNamespaceProjectionRoot } from "./namespace.js";
 
 function normalizeUsername(input: string): string {
   return String(input || "").trim().toLowerCase();
@@ -332,7 +332,7 @@ export function createSessionRouter() {
     }
 
     const namespace = resolveUserNamespace(req, username);
-    const hosts = listHostsByNamespace(namespace, username).map((host) => ({
+    const hosts = listHostsByNamespace(namespace, username).map((host: any) => ({
       id: host.id,
       namespace: host.namespace,
       host_key: host.host_key,
@@ -374,7 +374,7 @@ export function createSessionRouter() {
     }
 
     const namespace = resolveUserNamespace(req, username);
-    const memories = listHostMemoryHistory(namespace, username, fingerprint, limit).map((m) => ({
+    const memories = listHostMemoryHistory(namespace, username, fingerprint, limit).map((m: any) => ({
       id: m.id,
       namespace: m.namespace,
       host_key: m.host_key,
@@ -410,7 +410,7 @@ export function createSessionRouter() {
     const now = Date.now();
     const namespace = resolveUserNamespace(req, username);
     const hosts = listHostsByNamespace(namespace, username);
-    const host = hosts.find((entry) => entry.fingerprint === hostFingerprint);
+    const host = hosts.find((entry: any) => entry.fingerprint === hostFingerprint);
     const hostKey = host?.host_key || normalizeHostKey(hostFingerprint);
     appendSemanticMemory({
       namespace,

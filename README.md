@@ -10,12 +10,12 @@ Your computer has a name on the network.`monad.ai` turns that name into somethin
 
 ------
 
-## The idea in one sentence
+## The idea in one sentence:
 Run this on any machine, and that machine becomes **your node** — a place that knows who you are and answers questions about you.
 
 ------
 
-## What it looks like
+## What it looks like:
 You install it. You run it. Now you have a personal server that speaks a simple language:
 
 ```
@@ -28,7 +28,7 @@ Any app, any device, any language can talk to it.
 
 ------
 
-## How it works
+## How it works:
 It's a service you run locally or on any machine you control.
 It has one job: **answer questions about a namespace**.
 
@@ -47,17 +47,17 @@ That's it.
 
 ------
 
-## The pieces
+## The pieces:
 There are three things working together:
 
-**[.me](https://github.com/neurons-me/.me)** — the engine. Knows how to store, encrypt, and derive your data from a single seed.
+**[.me](https://github.com/neurons-me/.me)** — the kernel. Knows how to store, encrypt, and derive your data from a single seed.
 
 **monad.ai** — the surface. Takes that engine and puts it on the network so other things can talk to it.
 **[cleaker](https://github.com/neurons-me/cleaker)** — the connector. Takes your identity and plugs it into a namespace so apps can find you.
 
 ------
 
-## Where to go from here
+## Where to go from here:
 - **Want to run it?** → [npm/README.md](https://claude.ai/chat/npm/README.md)
 - **Want to understand the protocol?** → [Namespace Resolution Protocol](https://claude.ai/docs/en/Namespace Resolution Protocol.md)
 - **Want to build an app on top of this?** → [this.me on npm](https://npmjs.com/package/this.me)

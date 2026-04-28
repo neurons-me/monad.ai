@@ -1,4 +1,4 @@
-import type { NormalizedMeTarget } from "./meTarget";
+import type { NormalizedMeTarget } from "./meTarget.js";
 
 type EnvelopeShape = Record<string, unknown>;
 

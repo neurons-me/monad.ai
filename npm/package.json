@@ -9,7 +9,7 @@
     "dev": "tsx watch server.ts",
     "build": "tsc && node --input-type=commonjs -e \"require('fs').writeFileSync('dist/package.json', JSON.stringify({ type: 'commonjs' }, null, 2) + '\\n')\"",
     "start": "tsx server.ts",
-    "test": "jest --runInBand --colors",
+    "test": "vitest run",
     "test:claims": "tsx tests/claim_test_verification.ts",
     "init:public-figures": "tsx tests/inits/public_figures/index.ts",
     "lint": "eslint . --ext .ts",
@@ -30,15 +30,14 @@
   "devDependencies": {
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.5",
-    "@types/jest": "^30.0.0",
     "@types/node": "^24.10.1",
     "@types/supertest": "^7.2.0",
     "supertest": "^7.2.2",
-    "ts-jest": "^29.4.6",
     "tsx": "^4.20.6",
     "typedoc": "^0.28.16",
     "typedoc-plugin-markdown": "^4.9.0",
     "typescript": "^5.9.3",
-    "vitepress": "^1.6.4"
+    "vitepress": "^1.6.4",
+    "vitest": "^4.1.5"
   }
 }

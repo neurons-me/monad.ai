@@ -1,7 +1,7 @@
 import fs from "fs";
 import path from "path";
 import crypto from "crypto";
-import { normalizeNamespaceIdentity, parseNamespaceIdentityParts } from "../namespace/identity";
+import { normalizeNamespaceIdentity, parseNamespaceIdentityParts } from "../namespace/identity.js";
 
 export interface SelfNodeConfig {
   identity: string;

@@ -152,5 +152,5 @@ POST /         Host: <namespace>   →  write | claim | open
 
 ## License
 
-MIT — [neurons.me](https://neurons.me/)
+**MIT** — [neurons.me](https://neurons.me/)
 

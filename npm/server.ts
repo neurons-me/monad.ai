@@ -1,23 +1,20 @@
 import express from "express";
 import cors from "cors";
 import os from "os";
+import path from "path";
 import { getKernel, getKernelStateDir } from "./src/kernel/manager.js";
 import { setupPersistence } from "./src/kernel/persist.js";
-import path from "path";
-import { createHash } from "crypto";
-import { getAllBlocks } from "./src/Blockchain/blockchain";
-import { getUsersForRootNamespace } from "./src/Blockchain/users";
-import { claimNamespace, openNamespace, rebuildProjectedNamespaceClaims } from "./src/claim/records";
-import { ensureRootSemanticBootstrap } from "./src/claim/semanticBootstrap";
-import { getMemoriesForNamespace } from "./src/claim/replay";
-import { getClaim } from "./src/claim/records";
-import { isNamespaceWriteAuthorized, recordMemory } from "./src/claim/replay";
+import { getAllBlocks } from "./src/Blockchain/blockchain.js";
+import { getUsersForRootNamespace } from "./src/Blockchain/users.js";
+import { claimNamespace, openNamespace, rebuildProjectedNamespaceClaims, getClaim } from "./src/claim/records.js";
+import { ensureRootSemanticBootstrap } from "./src/claim/semanticBootstrap.js";
+import { getMemoriesForNamespace, isNamespaceWriteAuthorized, recordMemory } from "./src/claim/replay.js";
 import {
   appendSemanticMemory,
   listHostMemoryHistory,
   listSemanticMemoriesByNamespace,
   listSemanticMemoriesByRootNamespace,
-} from "./src/claim/memoryStore";
+} from "./src/claim/memoryStore.js";
 import {
   filterBlocksByNamespace,
   formatObserverRelationLabel,
@@ -26,39 +23,39 @@ import {
   resolveNamespaceProjectionRoot,
   resolveObserverRelation,
   resolveTransportHost,
-  type ObserverRelation,
-} from "./src/http/namespace";
-import { buildMeTargetNrp, normalizeHttpRequestToMeTarget } from "./src/http/meTarget";
-import { createEnvelope, createErrorEnvelope } from "./src/http/envelope";
+} from "./src/http/namespace.js";
+import { buildMeTargetNrp, normalizeHttpRequestToMeTarget } from "./src/http/meTarget.js";
+import { createEnvelope, createErrorEnvelope } from "./src/http/envelope.js";
+import { createPathResolverHandler } from "./src/http/pathResolver.js";
+import { createClaimsRouter } from "./src/http/claims.js";
+import { createSessionRouter } from "./src/http/session.js";
+import { createLegacyRouter } from "./src/http/legacy.js";
+import { loadSelfNodeConfig, resolveSelfDispatch } from "./src/http/selfMapping.js";
+import { recordSurfaceRequest } from "./src/http/surfaceTelemetry.js";
+import { normalizeNamespaceIdentity, normalizeNamespaceRootName } from "./src/namespace/identity.js";
+import { GUI_PKG_DIST_DIR, htmlShell, wantsHtml } from "./src/http/shell.js";
+import { computeProofId } from "./src/infra/hash.js";
 import {
-  createPathResolverHandler,
-  resolveNamespacePathValue,
-} from "./src/http/pathResolver";
-import { createClaimsRouter } from "./src/http/claims";
-import { createSessionRouter } from "./src/http/session";
-import { createLegacyRouter } from "./src/http/legacy";
+  parseBridgeTarget,
+  buildBridgeTarget,
+  buildNormalizedTarget,
+  buildKernelCommandTarget,
+  getNamespaceSelectorInfo,
+} from "./src/runtime/bridge.js";
 import {
-  buildSelfSurfaceEntry,
-  loadSelfNodeConfig,
-  resolveSelfDispatch,
-} from "./src/http/selfMapping";
+  normalizeOperation,
+  normalizeClaimableNamespace,
+  isCanonicalClaimableNamespace,
+  resolveCommandNamespace,
+  getDefaultReadPolicy,
+  parseNamespaceIdentity,
+} from "./src/runtime/commands.js";
 import {
-  attachSurfaceStreamClient,
-  getSurfaceTelemetrySnapshot,
-  recordSurfaceRequest,
-} from "./src/http/surfaceTelemetry";
-import {
-  buildNamespaceProviderBoot,
-  normalizeSurfaceRoute,
-  resolveNamespaceSurfaceSpec,
-} from "./src/http/provider";
-import {
-  normalizeNamespaceIdentity,
-  normalizeNamespaceRootName,
-  parseNamespaceIdentityParts,
-} from "./src/namespace/identity";
-import { parseTarget } from "cleaker";
-import { GUI_PKG_DIST_DIR, htmlShell, wantsHtml } from "./src/http/shell";
+  buildProviderBoot,
+  createProviderSurface,
+  type ProviderSurfaceConfig,
+} from "./src/surfaces/providerSurface.js";
+import { createFetchSurface } from "./src/surfaces/fetchSurface.js";
 
 const PORT = process.env.PORT || 8161;
 const NODE_HOSTNAME = os.hostname();
@@ -88,6 +85,17 @@ const SELF_NODE_CONFIG = loadSelfNodeConfig({
 const LOCAL_NAMESPACE_ROOT = normalizeNamespaceIdentity(
   SELF_NODE_CONFIG?.identity || process.env.ME_NAMESPACE || NODE_HOSTNAME,
 );
+
+const surfaceConfig: ProviderSurfaceConfig = {
+  selfNodeConfig: SELF_NODE_CONFIG,
+  hostname: NODE_HOSTNAME,
+  displayName: NODE_DISPLAY_NAME,
+};
+
+function buildRequestProviderBoot(req: express.Request, namespace: string) {
+  return buildProviderBoot(req, namespace, surfaceConfig);
+}
+
 const app = express();
 app.set("trust proxy", true);
 app.use(cors());
@@ -105,299 +113,6 @@ if (seededSemanticBootstrap > 0) {
   console.log(`∷ Seeded ${seededSemanticBootstrap} root semantic memories in ${semanticBootstrapRoot}`);
 }
 
-type BridgeTarget = {
-  namespace: string;
-  selector: string;
-  pathSlash: string;
-  pathDot: string;
-  nrp: string;
-};
-
-type ClaimIdentity = {
-  host: string;
-  username: string;
-  effective: string;
-};
-
-type NamespaceSelectorInfo = {
-  base: string;
-  selectorRaw: string | null;
-  webTarget: string | null;
-  hasDevice: boolean;
-};
-
-const RESERVED_SHORT_NAMESPACES = new Set(["self", "kernel", "local"]);
-
-function resolveRequestOrigin(req: express.Request, fallbackHost?: string) {
-  const host = resolveTransportHost(req);
-  const hostHeader = Array.isArray(req.headers.host) ? req.headers.host[0] : req.headers.host || host;
-  return `${req.protocol}://${String(hostHeader || fallbackHost || host).trim()}`;
-}
-
-function resolveRequestSurfaceRoute(req: express.Request) {
-  const hinted = String((req.query as any)?.route || "").trim();
-  return normalizeSurfaceRoute(hinted || req.path || "/");
-}
-
-function buildRequestSurfaceEntry(req: express.Request, namespace: string) {
-  const origin = resolveRequestOrigin(req, NODE_HOSTNAME);
-  return buildSelfSurfaceEntry({
-    self: SELF_NODE_CONFIG,
-    origin,
-    fallbackHost: NODE_HOSTNAME,
-    requestNamespace: namespace,
-  });
-}
-
-function buildRequestProviderBoot(req: express.Request, namespace: string) {
-  return buildNamespaceProviderBoot({
-    namespace,
-    route: resolveRequestSurfaceRoute(req),
-    origin: resolveRequestOrigin(req, NODE_HOSTNAME),
-    resolverHostName: NODE_HOSTNAME,
-    resolverDisplayName: NODE_DISPLAY_NAME,
-    surfaceEntry: buildRequestSurfaceEntry(req, namespace),
-  });
-}
-
-function extractNamespaceSelector(namespace: string): { base: string; selectorRaw: string | null } {
-  const raw = String(namespace || "").trim();
-  if (!raw) return { base: "", selectorRaw: null };
-  const match = raw.match(/^([^\[]+)(?:\[(.*)\])?$/);
-  if (!match) return { base: raw, selectorRaw: null };
-  return {
-    base: String(match[1] || "").trim(),
-    selectorRaw: match[2] === undefined ? null : String(match[2] || "").trim(),
-  };
-}
-
-function findSelectorValue(selectorRaw: string, selectorType: string): string | null {
-  const type = String(selectorType || "").trim().toLowerCase();
-  if (!type) return null;
-  const groups = selectorRaw
-    .split("|")
-    .map((part) => part.trim())
-    .filter(Boolean);
-
-  for (const group of groups) {
-    const parts = group
-      .split(";")
-      .map((part) => part.trim())
-      .filter(Boolean);
-    for (const part of parts) {
-      const colon = part.indexOf(":");
-      if (colon < 0) continue;
-      const head = part.slice(0, colon).trim().toLowerCase();
-      if (!head || head !== type) continue;
-      const rest = part.slice(colon + 1).trim();
-      if (!rest) continue;
-      const value = rest.split(",")[0]?.trim();
-      if (value) return value;
-    }
-  }
-  return null;
-}
-
-function normalizeWebUrl(value: string): string | null {
-  const raw = String(value || "").trim();
-  if (!raw) return null;
-  if (/^https?:\/\//i.test(raw)) return raw;
-  return `https://${raw.replace(/^\/+/, "")}`;
-}
-
-function parseHttpFetchUrl(value: unknown): URL | null {
-  const raw = String(value || "").trim();
-  if (!raw) return null;
-  try {
-    const parsed = new URL(raw);
-    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") return null;
-    return parsed;
-  } catch {
-    return null;
-  }
-}
-
-function getNamespaceSelectorInfo(namespace: string): NamespaceSelectorInfo {
-  const { base, selectorRaw } = extractNamespaceSelector(namespace);
-  if (!selectorRaw) {
-    return {
-      base,
-      selectorRaw: null,
-      webTarget: null,
-      hasDevice: false,
-    };
-  }
-
-  const webValue = findSelectorValue(selectorRaw, "web");
-  const webTarget = webValue ? normalizeWebUrl(webValue) : null;
-  const deviceValue = findSelectorValue(selectorRaw, "device");
-  const hostValue = findSelectorValue(selectorRaw, "host");
-  const hasDevice = !!(deviceValue || hostValue);
-
-  return {
-    base,
-    selectorRaw,
-    webTarget,
-    hasDevice,
-  };
-}
-
-function parseBridgeTarget(rawInput: string): BridgeTarget | null {
-  const raw = String(rawInput || "").trim();
-  if (!raw) return null;
-  try {
-    const parsed = parseTarget(raw.startsWith("me://") ? raw : `me://${raw}`, { allowShorthandRead: true });
-    const namespace = normalizeNamespaceIdentity(parsed.namespace.fqdn);
-    if (!namespace) return null;
-
-    const selector = String(parsed.operation || parsed.intent.selector || "read").trim() || "read";
-    const pathSlash = String(parsed.path || "").trim().replace(/^\/+/, "");
-    const pathDot = pathSlash
-      .split("/")
-      .map((part) => part.trim())
-      .filter(Boolean)
-      .join(".");
-    const nrp = `me://${namespace}:${selector}/${pathDot || "_"}`;
-
-    return {
-      namespace,
-      selector,
-      pathSlash,
-      pathDot,
-      nrp,
-    };
-  } catch {
-    return null;
-  }
-}
-
-function toStableJson(value: unknown): string {
-  if (value === null || typeof value !== "object") {
-    return JSON.stringify(value);
-  }
-
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => toStableJson(item)).join(",")}]`;
-  }
-
-  const obj = value as Record<string, unknown>;
-  const keys = Object.keys(obj).sort();
-  const entries = keys.map((key) => `${JSON.stringify(key)}:${toStableJson(obj[key])}`);
-  return `{${entries.join(",")}}`;
-}
-
-function computeProofId(input: Record<string, unknown>) {
-  return createHash("sha256").update(toStableJson(input)).digest("hex");
-}
-
-function parseNamespaceIdentity(namespace: string): ClaimIdentity {
-  return parseNamespaceIdentityParts(namespace);
-}
-
-function getDefaultReadPolicy(namespace: string) {
-  const identity = parseNamespaceIdentity(namespace);
-  const allowed = ["profile/*", "me/public/*", `${namespace}/*`];
-  if (identity.host) {
-    allowed.push(`${identity.host}/*`);
-  }
-  return {
-    allowed,
-    capabilities: ["read"],
-  };
-}
-
-function normalizeOperation(input: unknown): "read" | "write" | "claim" | "open" {
-  const raw = String(input || "").trim().toLowerCase();
-  if (raw === "claim" || raw === "open" || raw === "read" || raw === "write") {
-    return raw as "read" | "write" | "claim" | "open";
-  }
-  return "write";
-}
-
-function normalizeClaimableNamespace(raw: unknown): string {
-  return normalizeNamespaceIdentity(raw);
-}
-
-function isCanonicalClaimableNamespace(namespace: string): boolean {
-  const ns = normalizeClaimableNamespace(namespace);
-  if (!ns) return false;
-  if (RESERVED_SHORT_NAMESPACES.has(ns)) return true;
-  return ns.includes(".");
-}
-
-function buildKernelCommandTarget(
-  req: express.Request,
-  operation: "claim" | "open",
-  path: string,
-) {
-  const host = resolveTransportHost(req) || "unknown";
-  const normalizedPath = String(path || "").trim();
-  const relation = resolveObserverRelation(req);
-  return {
-    host,
-    namespace: "kernel",
-    operation,
-    path: normalizedPath || "_",
-    nrp: buildMeTargetNrp("kernel", operation, normalizedPath || "_", relation),
-    relation,
-  };
-}
-
-function resolveCommandNamespace(
-  operation: "read" | "write" | "claim" | "open",
-  body: Record<string, unknown>,
-  parsedTarget: BridgeTarget | null,
-  fallbackNamespace: string,
-): string {
-  const bodyNamespace = normalizeClaimableNamespace(body.namespace);
-  if (bodyNamespace) return bodyNamespace;
-  if ((operation === "claim" || operation === "open") && parsedTarget?.namespace === "kernel") {
-    const commandPath = normalizeClaimableNamespace(parsedTarget.pathSlash || parsedTarget.pathDot);
-    if (commandPath) return commandPath;
-  }
-  return normalizeClaimableNamespace(parsedTarget?.namespace || fallbackNamespace);
-}
-
-function buildBridgeTarget(
-  resolved: BridgeTarget | null,
-  requestHost: string,
-  relation: ObserverRelation,
-  rawFallback = "",
-) {
-  const namespaceMe = resolved?.namespace || "unknown";
-  const nrp = resolved
-    ? buildMeTargetNrp(namespaceMe, "read", resolved.pathDot || "", relation)
-    : rawFallback || buildMeTargetNrp(namespaceMe, "read", "", relation);
-  return {
-    namespace: {
-      me: namespaceMe,
-      host: requestHost,
-    },
-    operation: "read" as const,
-    path: resolved?.pathDot || "",
-    nrp,
-    relation,
-  };
-}
-
-function buildNormalizedTarget(
-  req: express.Request,
-  namespace: string,
-  operation: "read" | "write" | "claim" | "open",
-  path: string,
-) {
-  const host = resolveTransportHost(req) || "unknown";
-  const relation = resolveObserverRelation(req);
-  return {
-    host,
-    namespace,
-    operation,
-    path,
-    nrp: buildMeTargetNrp(namespace, operation, path, relation),
-    relation,
-  };
-}
-
 function createNoCacheStaticOptions() {
   return {
     etag: false,
@@ -411,9 +126,7 @@ function createNoCacheStaticOptions() {
   };
 }
 
-// Serve built GUI assets from this.GUI package dist.
-// During local development we want the browser to always fetch the latest bundle,
-// otherwise Cleaker can keep rendering a stale UMD after a rebuild.
+// Static assets
 app.use("/gui", express.static(GUI_PKG_DIST_DIR, createNoCacheStaticOptions()));
 app.use("/me", express.static(ME_PKG_DIST_DIR, createNoCacheStaticOptions()));
 app.use("/cleaker", express.static(CLEAKER_PKG_DIST_DIR, createNoCacheStaticOptions()));
@@ -424,166 +137,11 @@ app.get("/routes.js", (_req, res) => {
   return res.sendFile(MONAD_ROUTES_PATH);
 });
 
-// NamespaceProvider boot endpoint (semantic runtime injection)
-app.get("/__bootstrap", (req, res) => {
-  const namespace = resolveNamespace(req);
-  const host = resolveTransportHost(req);
-  const origin = resolveRequestOrigin(req, host);
-  const target = normalizeHttpRequestToMeTarget(req);
-  const surfaceEntry = buildRequestSurfaceEntry(req, namespace);
-  const provider = buildRequestProviderBoot(req, namespace);
-  const telemetry = getSurfaceTelemetrySnapshot();
-  return res.json(createEnvelope(target, {
-    host,
-    namespace,
-    apiOrigin: origin,
-    resolverHostName: NODE_HOSTNAME,
-    resolverDisplayName: NODE_DISPLAY_NAME,
-    provider,
-    surfaceEntry: {
-      ...surfaceEntry,
-      ...telemetry,
-    },
-  }));
-});
+// Surface routers
+app.use(createProviderSurface(surfaceConfig));
+app.use(createFetchSurface({ timeoutMs: FETCH_PROXY_TIMEOUT_MS }));
 
-app.get("/__provider", (req, res) => {
-  const namespace = String((req.query as any)?.namespace || "").trim() || resolveNamespace(req);
-  const target = normalizeHttpRequestToMeTarget(req);
-  const provider = buildRequestProviderBoot(req, namespace);
-  return res.json(createEnvelope(target, {
-    namespace,
-    provider,
-  }));
-});
-
-app.get("/__provider/resolve", async (req, res) => {
-  const namespace = String((req.query as any)?.namespace || "").trim() || resolveNamespace(req);
-  const rawPath = String((req.query as any)?.path || "").trim();
-  const route = resolveRequestSurfaceRoute(req);
-  const target = normalizeHttpRequestToMeTarget(req);
-
-  if (!rawPath) {
-    return res.status(400).json(createErrorEnvelope(target, {
-      namespace,
-      path: "",
-      route,
-      error: "PATH_REQUIRED",
-      detail: "NamespaceProvider.resolve requires ?path=",
-    }));
-  }
-
-  const resolved = await resolveNamespacePathValue(namespace, rawPath);
-  if (!resolved.found) {
-    return res.status(404).json(createErrorEnvelope(target, {
-      namespace,
-      path: resolved.path || rawPath,
-      route,
-      error: "PATH_NOT_FOUND",
-    }));
-  }
-
-  return res.json(createEnvelope(target, {
-    namespace: resolved.namespace,
-    path: resolved.path,
-    route,
-    value: resolved.value,
-  }));
-});
-
-app.get("/__provider/surface", (req, res) => {
-  const namespace = String((req.query as any)?.namespace || "").trim() || resolveNamespace(req);
-  const route = resolveRequestSurfaceRoute(req);
-  const target = normalizeHttpRequestToMeTarget(req);
-  const surfaceEntry = buildRequestSurfaceEntry(req, namespace);
-  const surface = resolveNamespaceSurfaceSpec({
-    namespace,
-    route,
-    surfaceEntry,
-  });
-
-  return res.json(createEnvelope(target, {
-    namespace,
-    path: route,
-    route,
-    surface,
-    surfaceEntry,
-  }));
-});
-
-app.get("/__surface", (req, res) => {
-  const namespace = resolveNamespace(req);
-  const host = resolveTransportHost(req);
-  const target = normalizeHttpRequestToMeTarget(req);
-  const surfaceEntry = buildRequestSurfaceEntry(req, namespace);
-
-  return res.json(createEnvelope(target, {
-    host,
-    namespace,
-    surfaceEntry: {
-      ...surfaceEntry,
-      ...getSurfaceTelemetrySnapshot(),
-    },
-  }));
-});
-
-app.get("/__surface/events", (req, res) => {
-  attachSurfaceStreamClient(req, res);
-});
-
-app.get("/__fetch", async (req, res) => {
-  const target = normalizeHttpRequestToMeTarget(req);
-  const remoteUrl = parseHttpFetchUrl((req.query as any)?.url);
-
-  if (!remoteUrl) {
-    return res.status(400).json(createErrorEnvelope(target, {
-      error: "FETCH_URL_INVALID",
-      detail: "Provide an absolute http(s) URL via ?url=",
-    }));
-  }
-
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), FETCH_PROXY_TIMEOUT_MS);
-
-  try {
-    const response = await fetch(remoteUrl.toString(), {
-      method: "GET",
-      redirect: "follow",
-      signal: controller.signal,
-      headers: {
-        accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "user-agent": "monad.ai/1.0 this.DOM fetch proxy",
-      },
-    });
-
-    const contentType = String(response.headers.get("content-type") || "text/html; charset=utf-8");
-    const bodyText = await response.text();
-
-    return res.status(response.status).json(createEnvelope(target, {
-      value: {
-        url: remoteUrl.toString(),
-        finalUrl: response.url || remoteUrl.toString(),
-        status: response.status,
-        ok: response.ok,
-        contentType,
-        body: bodyText,
-      },
-    }));
-  } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    const isTimeout = error instanceof Error && error.name === "AbortError";
-    return res.status(isTimeout ? 504 : 502).json(createErrorEnvelope(target, {
-      error: isTimeout ? "FETCH_TIMEOUT" : "FETCH_PROXY_FAILED",
-      detail,
-      value: {
-        url: remoteUrl.toString(),
-      },
-    }));
-  } finally {
-    clearTimeout(timeoutId);
-  }
-});
-
+// --- Bridge handler: me:// -> http://localhost:<port>/resolve?target=...
 const resolveBridgeHandler = async (req: express.Request, res: express.Response) => {
   const rawTarget = String((req.query as any)?.target || "").trim();
   const decodedTarget = rawTarget ? decodeURIComponent(rawTarget) : "";
@@ -702,14 +260,10 @@ const resolveBridgeHandler = async (req: express.Request, res: express.Response)
     for (const [key, value] of Object.entries(req.query || {})) {
       if (key === "target") continue;
       if (Array.isArray(value)) {
-        for (const item of value) {
-          url.searchParams.append(key, String(item));
-        }
+        for (const item of value) url.searchParams.append(key, String(item));
         continue;
       }
-      if (typeof value !== "undefined") {
-        url.searchParams.set(key, String(value));
-      }
+      if (typeof value !== "undefined") url.searchParams.set(key, String(value));
     }
 
     const response = await fetch(url, {
@@ -725,18 +279,8 @@ const resolveBridgeHandler = async (req: express.Request, res: express.Response)
     if (contentType.includes("application/json")) {
       const payload = await response.json();
       const patched = payload && typeof payload === "object"
-        ? {
-            ...payload,
-            target: bridgeTarget,
-            ...(selectorDispatch ? { dispatch: selectorDispatch } : {}),
-          }
-        : {
-            ok: response.ok,
-            operation: "read",
-            target: bridgeTarget,
-            value: payload,
-            ...(selectorDispatch ? { dispatch: selectorDispatch } : {}),
-          };
+        ? { ...payload, target: bridgeTarget, ...(selectorDispatch ? { dispatch: selectorDispatch } : {}) }
+        : { ok: response.ok, operation: "read", target: bridgeTarget, value: payload, ...(selectorDispatch ? { dispatch: selectorDispatch } : {}) };
       return res.status(response.status).json(patched);
     }
 
@@ -753,8 +297,6 @@ const resolveBridgeHandler = async (req: express.Request, res: express.Response)
   }
 };
 
-// --- Local Bridge: me:// -> http://localhost:<port>/resolve?target=...
-// Allows browser testing of me:// targets without registering a protocol handler.
 app.get("/resolve", resolveBridgeHandler);
 
 app.post("/me/*", async (req: express.Request, res: express.Response) => {
@@ -787,9 +329,7 @@ app.post("/me/*", async (req: express.Request, res: express.Response) => {
   const target = buildKernelCommandTarget(req, operation, namespace);
 
   if (!namespace) {
-    return res.status(400).json(createErrorEnvelope(target, {
-      error: "NAMESPACE_REQUIRED",
-    }));
+    return res.status(400).json(createErrorEnvelope(target, { error: "NAMESPACE_REQUIRED" }));
   }
 
   if (!isCanonicalClaimableNamespace(namespace)) {
@@ -811,20 +351,13 @@ app.post("/me/*", async (req: express.Request, res: express.Response) => {
 
     if (!out.ok) {
       const status =
-        out.error === "NAMESPACE_TAKEN"
-          ? 409
-          : out.error === "NAMESPACE_REQUIRED"
-              || out.error === "SECRET_REQUIRED"
-              || out.error === "IDENTITY_HASH_REQUIRED"
-              || out.error === "CLAIM_KEY_INVALID"
-              || out.error === "CLAIM_KEYPAIR_MISMATCH"
-              || out.error === "PROOF_MESSAGE_INVALID"
-              || out.error === "PROOF_NAMESPACE_MISMATCH"
-              || out.error === "PROOF_TIMESTAMP_INVALID"
-            ? 400
-            : out.error === "PROOF_INVALID"
-              ? 403
-            : 500;
+        out.error === "NAMESPACE_TAKEN" ? 409
+        : out.error === "NAMESPACE_REQUIRED" || out.error === "SECRET_REQUIRED"
+          || out.error === "IDENTITY_HASH_REQUIRED" || out.error === "CLAIM_KEY_INVALID"
+          || out.error === "CLAIM_KEYPAIR_MISMATCH" || out.error === "PROOF_MESSAGE_INVALID"
+          || out.error === "PROOF_NAMESPACE_MISMATCH" || out.error === "PROOF_TIMESTAMP_INVALID" ? 400
+        : out.error === "PROOF_INVALID" ? 403
+        : 500;
       return res.status(status).json(createErrorEnvelope(target, { error: out.error }));
     }
 
@@ -845,15 +378,11 @@ app.post("/me/*", async (req: express.Request, res: express.Response) => {
 
   if (!out.ok) {
     const status =
-      out.error === "CLAIM_NOT_FOUND"
-        ? 404
-        : out.error === "CLAIM_VERIFICATION_FAILED" || out.error === "IDENTITY_MISMATCH"
-          ? 403
-          : out.error === "NAMESPACE_REQUIRED"
-              || out.error === "SECRET_REQUIRED"
-              || out.error === "IDENTITY_HASH_REQUIRED"
-            ? 400
-            : 500;
+      out.error === "CLAIM_NOT_FOUND" ? 404
+      : out.error === "CLAIM_VERIFICATION_FAILED" || out.error === "IDENTITY_MISMATCH" ? 403
+      : out.error === "NAMESPACE_REQUIRED" || out.error === "SECRET_REQUIRED"
+        || out.error === "IDENTITY_HASH_REQUIRED" ? 400
+      : 500;
     return res.status(status).json(createErrorEnvelope(target, { error: out.error }));
   }
 
@@ -886,31 +415,24 @@ app.post("/me/*", async (req: express.Request, res: express.Response) => {
   }));
 });
 
-// HTML shell for root and any deep route when Accept: text/html
+// HTML shell for root when Accept: text/html
 app.get("/", (req, res, next) => {
-  if ((req.query as any)?.target) {
-    return resolveBridgeHandler(req, res);
-  }
+  if ((req.query as any)?.target) return resolveBridgeHandler(req, res);
   if (!wantsHtml(req)) return next();
   const namespace = resolveNamespace(req);
   res.setHeader("Content-Type", "text/html; charset=utf-8");
-  return res.status(200).send(htmlShell({
-    providerBoot: buildRequestProviderBoot(req, namespace),
-  }));
+  return res.status(200).send(htmlShell({ providerBoot: buildRequestProviderBoot(req, namespace) }));
 });
-// Minimal request logger (no identity semantics, only transport info)
+
+// Minimal request logger
 app.use((req, _res, next) => {
   const transportHost = resolveTransportHost(req);
   const forwardedHost = resolveHostNamespace(req);
   const target = normalizeHttpRequestToMeTarget(req);
   const lens = formatObserverRelationLabel(target.relation);
   const startedAt = Date.now();
-  const forwardedSuffix = forwardedHost && forwardedHost !== transportHost
-    ? ` xf=${forwardedHost}`
-    : "";
-  console.log(
-    `→ ${req.method} ${req.url} host=${transportHost || "unknown"} ns=${target.namespace} lens=${lens} op=${target.operation} nrp=${target.nrp}${forwardedSuffix}`
-  );
+  const forwardedSuffix = forwardedHost && forwardedHost !== transportHost ? ` xf=${forwardedHost}` : "";
+  console.log(`→ ${req.method} ${req.url} host=${transportHost || "unknown"} ns=${target.namespace} lens=${lens} op=${target.operation} nrp=${target.nrp}${forwardedSuffix}`);
   _res.on("finish", () => {
     if (req.path === "/__surface/events") return;
     recordSurfaceRequest({
@@ -930,8 +452,7 @@ app.use((req, _res, next) => {
   next();
 });
 
-// --- Universal Ledger Write Surface ---------------------------------
-// Accept ANY ME block (or arbitrary JSON) and append me to the ledger.
+// --- Universal Ledger Write Surface
 app.post("/", async (req: express.Request, res: express.Response) => {
   const body = req.body;
   const target = normalizeHttpRequestToMeTarget(req);
@@ -950,9 +471,7 @@ app.post("/", async (req: express.Request, res: express.Response) => {
       : null;
 
   if (!body || typeof body !== "object") {
-    return res.status(400).json(createErrorEnvelope(target, {
-      error: "Expected JSON block in request body",
-    }));
+    return res.status(400).json(createErrorEnvelope(target, { error: "Expected JSON block in request body" }));
   }
 
   if (operation === "claim") {
@@ -969,28 +488,19 @@ app.post("/", async (req: express.Request, res: express.Response) => {
       identityHash: String((body as any)?.identityHash || "").trim(),
       publicKey: String((body as any)?.publicKey || "").trim() || null,
       privateKey: String((body as any)?.privateKey || "").trim() || null,
-      proof: ((body as any)?.proof && typeof (body as any).proof === "object")
-        ? (body as any).proof
-        : null,
+      proof: ((body as any)?.proof && typeof (body as any).proof === "object") ? (body as any).proof : null,
     });
 
     const claimTarget = commandTarget || buildNormalizedTarget(req, resolvedNamespace, "claim", "");
     if (!out.ok) {
       const status =
-        out.error === "NAMESPACE_TAKEN"
-          ? 409
-          : out.error === "NAMESPACE_REQUIRED"
-              || out.error === "SECRET_REQUIRED"
-              || out.error === "IDENTITY_HASH_REQUIRED"
-              || out.error === "CLAIM_KEY_INVALID"
-              || out.error === "CLAIM_KEYPAIR_MISMATCH"
-              || out.error === "PROOF_MESSAGE_INVALID"
-              || out.error === "PROOF_NAMESPACE_MISMATCH"
-              || out.error === "PROOF_TIMESTAMP_INVALID"
-            ? 400
-            : out.error === "PROOF_INVALID"
-              ? 403
-            : 500;
+        out.error === "NAMESPACE_TAKEN" ? 409
+        : out.error === "NAMESPACE_REQUIRED" || out.error === "SECRET_REQUIRED"
+          || out.error === "IDENTITY_HASH_REQUIRED" || out.error === "CLAIM_KEY_INVALID"
+          || out.error === "CLAIM_KEYPAIR_MISMATCH" || out.error === "PROOF_MESSAGE_INVALID"
+          || out.error === "PROOF_NAMESPACE_MISMATCH" || out.error === "PROOF_TIMESTAMP_INVALID" ? 400
+        : out.error === "PROOF_INVALID" ? 403
+        : 500;
       return res.status(status).json(createErrorEnvelope(claimTarget, { error: out.error }));
     }
 
@@ -1020,15 +530,11 @@ app.post("/", async (req: express.Request, res: express.Response) => {
     const openTarget = commandTarget || buildNormalizedTarget(req, resolvedNamespace, "open", "");
     if (!out.ok) {
       const status =
-        out.error === "CLAIM_NOT_FOUND"
-          ? 404
-          : out.error === "CLAIM_VERIFICATION_FAILED" || out.error === "IDENTITY_MISMATCH"
-            ? 403
-            : out.error === "NAMESPACE_REQUIRED"
-                || out.error === "SECRET_REQUIRED"
-                || out.error === "IDENTITY_HASH_REQUIRED"
-              ? 400
-              : 500;
+        out.error === "CLAIM_NOT_FOUND" ? 404
+        : out.error === "CLAIM_VERIFICATION_FAILED" || out.error === "IDENTITY_MISMATCH" ? 403
+        : out.error === "NAMESPACE_REQUIRED" || out.error === "SECRET_REQUIRED"
+          || out.error === "IDENTITY_HASH_REQUIRED" ? 400
+        : 500;
       return res.status(status).json(createErrorEnvelope(openTarget, { error: out.error }));
     }
 
@@ -1071,11 +577,8 @@ app.post("/", async (req: express.Request, res: express.Response) => {
       claimPublicKey: claim.publicKey,
       body,
     });
-
     if (!authorized) {
-      return res.status(403).json(createErrorEnvelope(target, {
-        error: "NAMESPACE_WRITE_FORBIDDEN",
-      }));
+      return res.status(403).json(createErrorEnvelope(target, { error: "NAMESPACE_WRITE_FORBIDDEN" }));
     }
   }
 
@@ -1083,16 +586,9 @@ app.post("/", async (req: express.Request, res: express.Response) => {
     ? claim.identityHash
     : String((body as any).identityHash || "").trim();
 
-  const entry = recordMemory({
-    namespace,
-    payload: body,
-    identityHash: blockIdentityHash,
-    timestamp,
-  });
+  const entry = recordMemory({ namespace, payload: body, identityHash: blockIdentityHash, timestamp });
   if (!entry) {
-    return res.status(400).json(createErrorEnvelope(target, {
-      error: "INVALID_MEMORY_INPUT",
-    }));
+    return res.status(400).json(createErrorEnvelope(target, { error: "INVALID_MEMORY_INPUT" }));
   }
 
   console.log("🧠 New Memory Event:");
@@ -1108,8 +604,8 @@ app.post("/", async (req: express.Request, res: express.Response) => {
   }));
 });
 
-// --- Universal Ledger Read Surface ----------------------
-app.get("/", async (req: express.Request, res: express.Response) => {
+// --- Universal Ledger Read Surface
+app.get("/", (req: express.Request, res: express.Response) => {
   const chainNs = resolveNamespace(req);
   const target = normalizeHttpRequestToMeTarget(req);
   const lens = formatObserverRelationLabel(target.relation);
@@ -1117,57 +613,31 @@ app.get("/", async (req: express.Request, res: express.Response) => {
   const identityHash = String((req.query as any)?.identityHash || "").trim();
   const rootNamespace = resolveNamespaceProjectionRoot(chainNs) || chainNs;
 
-  const all = await getAllBlocks();
-  const users = await getUsersForRootNamespace(rootNamespace);
+  const all = getAllBlocks();
+  const users = getUsersForRootNamespace(rootNamespace);
 
   let blocks = filterBlocksByNamespace(all, chainNs);
-  if (identityHash) {
-    blocks = blocks.filter((b: any) => String(b?.authorIdentityHash || "") === identityHash);
-  }
+  if (identityHash) blocks = blocks.filter((b: any) => String(b?.authorIdentityHash || "") === identityHash);
 
-  // newest-first and limit
-  blocks = blocks
-    .slice()
-    .sort((a: any, b: any) => Number(b?.timestamp || 0) - Number(a?.timestamp || 0))
-    .slice(0, limit);
+  blocks = blocks.slice().sort((a: any, b: any) => Number(b?.timestamp || 0) - Number(a?.timestamp || 0)).slice(0, limit);
 
-  return res.json(createEnvelope(target, {
-    namespace: chainNs,
-    rootNamespace,
-    lens,
-    users,
-    blocks,
-    count: blocks.length,
-  }));
+  return res.json(createEnvelope(target, { namespace: chainNs, rootNamespace, lens, users, blocks, count: blocks.length }));
 });
 
-// Explicit blocks endpoint (same semantics as GET /, but clearer name)
-app.get("/blocks", async (req: express.Request, res: express.Response) => {
-  // Delegate by rewriting url semantics in place
-  // (Keep implementation simple by copying the same logic.)
+app.get("/blocks", (req: express.Request, res: express.Response) => {
   const ns = resolveNamespace(req);
   const target = normalizeHttpRequestToMeTarget(req);
   const lens = formatObserverRelationLabel(target.relation);
   const limit = Math.max(1, Math.min(5000, Number((req.query as any)?.limit ?? 5000)));
   const identityHash = String((req.query as any)?.identityHash || "").trim();
 
-  const all = await getAllBlocks();
+  const all = getAllBlocks();
   let blocks = filterBlocksByNamespace(all, ns);
-  if (identityHash) {
-    blocks = blocks.filter((b: any) => String(b?.authorIdentityHash || "") === identityHash);
-  }
+  if (identityHash) blocks = blocks.filter((b: any) => String(b?.authorIdentityHash || "") === identityHash);
 
-  blocks = blocks
-    .slice()
-    .sort((a: any, b: any) => Number(b?.timestamp || 0) - Number(a?.timestamp || 0))
-    .slice(0, limit);
+  blocks = blocks.slice().sort((a: any, b: any) => Number(b?.timestamp || 0) - Number(a?.timestamp || 0)).slice(0, limit);
 
-  return res.json(createEnvelope(target, {
-    namespace: ns,
-    lens,
-    blocks,
-    count: blocks.length,
-  }));
+  return res.json(createEnvelope(target, { namespace: ns, lens, blocks, count: blocks.length }));
 });
 
 app.get("/blockchain", async (req: express.Request, res: express.Response) => {
@@ -1176,52 +646,27 @@ app.get("/blockchain", async (req: express.Request, res: express.Response) => {
   const target = normalizeHttpRequestToMeTarget(req);
   const lens = formatObserverRelationLabel(target.relation);
   const limit = Math.max(1, Math.min(5000, Number((req.query as any)?.limit ?? 500)));
-
   const memories = listSemanticMemoriesByRootNamespace(rootNamespace, { limit });
-
-  return res.json(createEnvelope(target, {
-    namespace: chainNs,
-    rootNamespace,
-    lens,
-    memories,
-    count: memories.length,
-  }));
+  return res.json(createEnvelope(target, { namespace: chainNs, rootNamespace, lens, memories, count: memories.length }));
 });
 
-// --- Convenience: allow GET /@... to behave like GET / but with path-based namespace addressing.
-// NOTE: This MUST be defined before the catch-all path resolver.
-app.get("/@*", async (req: express.Request, res: express.Response) => {
+// NOTE: Must be defined before the catch-all path resolver.
+app.get("/@*", (req: express.Request, res: express.Response) => {
   const chainNs = resolveNamespace(req);
   const target = normalizeHttpRequestToMeTarget(req);
   const lens = formatObserverRelationLabel(target.relation);
   const limit = Math.max(1, Math.min(5000, Number((req.query as any)?.limit ?? 5000)));
   const identityHash = String((req.query as any)?.identityHash || "").trim();
 
-  const all = await getAllBlocks();
-
+  const all = getAllBlocks();
   let blocks = filterBlocksByNamespace(all, chainNs);
-  if (identityHash) {
-    blocks = blocks.filter((b: any) => String(b?.authorIdentityHash || "") === identityHash);
-  }
+  if (identityHash) blocks = blocks.filter((b: any) => String(b?.authorIdentityHash || "") === identityHash);
+  blocks = blocks.slice().sort((a: any, b: any) => Number(b?.timestamp || 0) - Number(a?.timestamp || 0)).slice(0, limit);
 
-  blocks = blocks
-    .slice()
-    .sort((a: any, b: any) => Number(b?.timestamp || 0) - Number(a?.timestamp || 0))
-    .slice(0, limit);
-
-  return res.json(createEnvelope(target, {
-    namespace: chainNs,
-    lens,
-    blocks,
-    count: blocks.length,
-  }));
+  return res.json(createEnvelope(target, { namespace: chainNs, lens, blocks, count: blocks.length }));
 });
 
-// Legacy extensions: username claims and biometric matching remain available,
-// but they are no longer presented as core cleaker semantics.
-
-// --- CommitSync Protocol Endpoints ---
-// Commit a new semantic memory event (single or batch)
+// --- CommitSync Protocol
 app.post("/api/v1/commit", async (req, res) => {
   try {
     const body = (req.body ?? {}) as Record<string, unknown>;
@@ -1236,12 +681,9 @@ app.post("/api/v1/commit", async (req, res) => {
               : (body.memory as Record<string, unknown>).value,
           }]
         : [];
-    if (!rawEvents.length) {
-      return res.status(400).json({ error: "No events provided" });
-    }
+    if (!rawEvents.length) return res.status(400).json({ error: "No events provided" });
     const results = [];
     for (const event of rawEvents) {
-      // event: { namespace, path, operator, data, signature, expectedPrevHash, timestamp }
       try {
         const memory = appendSemanticMemory(event);
         results.push({ ok: true, memory });
@@ -1260,14 +702,11 @@ app.post("/api/v1/commit", async (req, res) => {
   }
 });
 
-// Sync: fetch semantic memory events for a namespace since a given timestamp/hash
 app.get("/api/v1/sync", async (req, res) => {
   try {
     const namespace = String(req.query.namespace || "").trim().toLowerCase();
     const since = Number(req.query.since || 0);
-    if (!namespace) {
-      return res.status(400).json({ error: "Missing namespace" });
-    }
+    if (!namespace) return res.status(400).json({ error: "Missing namespace" });
     const username = String(req.query.username || "");
     const fingerprint = String(req.query.fingerprint || "");
     const limit = Number(req.query.limit || 2000);
@@ -1285,20 +724,17 @@ app.use(createClaimsRouter());
 app.use(createSessionRouter());
 app.use(createLegacyRouter());
 
-
-// --- Path Resolver Catch-all (MUST be last route before app.listen) ---
-app.get("/*", (req, res, next) => {
-  // If a browser is requesting HTML, always return the SPA shell.
+// --- Path Resolver Catch-all (MUST be last route before app.listen)
+app.get("/*", (req, res) => {
   if (wantsHtml(req)) {
     const namespace = resolveNamespace(req);
     res.setHeader("Content-Type", "text/html; charset=utf-8");
-    return res.status(200).send(htmlShell({
-      providerBoot: buildRequestProviderBoot(req, namespace),
-    }));
+    return res.status(200).send(htmlShell({ providerBoot: buildRequestProviderBoot(req, namespace) }));
   }
   return createPathResolverHandler()(req, res);
 });
-// --- Start Server ----------------------------------------
+
+// --- Start Server
 getKernel();
 setupPersistence();
 

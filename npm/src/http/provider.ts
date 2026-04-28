@@ -1,5 +1,5 @@
-import { readSemanticValueForNamespace } from "../claim/memoryStore";
-import type { SelfSurfaceEntry } from "./selfMapping";
+import { readSemanticValueForNamespace } from "../claim/memoryStore.js";
+import type { SelfSurfaceEntry } from "./selfMapping.js";
 
 export interface NamespaceProviderBoot {
   kind: "namespace-provider";

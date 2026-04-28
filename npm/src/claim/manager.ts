@@ -1,13 +1,13 @@
 import crypto from "crypto";
 import fs from "fs";
 import path from "path";
-import { normalizeNamespaceIdentity } from "../namespace/identity";
+import { normalizeNamespaceIdentity } from "../namespace/identity.js";
 import type {
   PersistentClaimKeySource,
   PersistentClaimPublicKey,
   PersistentClaimRecord,
   PersistentClaimSummary,
-} from "./types";
+} from "./types.js";
 
 type ClaimStorePaths = {
   claimsDir: string;

@@ -1,15 +1,9 @@
 ### **Namespace**:
-
 Canonical resource grammar:
-
 `me://namespace[selector]/path`
-
 Implementation-specific daemon command surface:
-
 `me://namespace:operation/path`
-
 **1 key = 1 subject = N monads.ai**
-
 **namespace** = canonical resource namespace
 **selector** = canonical NRP selector when using the resource grammar
 **operation** = daemon/kernel command intent when using the command surface
@@ -47,7 +41,6 @@ me://wikileaks[host:wikileaks.org|protocol:https]:read/page
 ---
 
 So now the current **daemon command surface** reads cleanly:
-
 `me://self:read/profile`
 `me://self:write/profile.name`
 `me://kernel:export/snapshot`
@@ -56,9 +49,7 @@ So now the current **daemon command surface** reads cleanly:
 ---
 
 # **Algebra of Encrypted Audiences**
-
 In this algebra, access and visibility are determined by the interplay of three sets:
-
 - **Context** defines *where* and *on which nodes* data resides.
 - **Capability** defines *which actions* are permitted on the data.
 - **Encryption** defines *who can decrypt* and read the content.

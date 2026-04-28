@@ -1,5 +1,5 @@
 import express from "express";
-import { claimUser, getUser } from "../Blockchain/users";
+import { claimUser, getUser } from "../Blockchain/users.js";
 
 export function createLegacyRouter() {
   const router = express.Router();

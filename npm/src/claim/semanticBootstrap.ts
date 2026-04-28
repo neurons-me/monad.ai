@@ -1,6 +1,6 @@
-import { normalizeNamespaceRootName } from "../namespace/identity";
-import { appendSemanticMemory, readSemanticValueForNamespace } from "./memoryStore";
-import { ROOT_SCHEMA_SEEDS } from "./semanticCatalog";
+import { normalizeNamespaceRootName } from "../namespace/identity.js";
+import { appendSemanticMemory, readSemanticValueForNamespace } from "./memoryStore.js";
+import { ROOT_SCHEMA_SEEDS } from "./semanticCatalog.js";
 
 function stableStringify(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);

@@ -1,12 +1,12 @@
 import express from "express";
 import crypto from "crypto";
-import { claimNamespace, openNamespace } from "../claim/records";
-import { getMemoriesForNamespace } from "../claim/replay";
-import { appendSemanticMemory, readSemanticValueForNamespace } from "../claim/memoryStore";
-import { seedClaimNamespaceSemantics } from "../claim/claimSemantics";
-import { normalizeHttpRequestToMeTarget } from "./meTarget";
-import { createEnvelope, createErrorEnvelope } from "./envelope";
-import { parseNamespaceIdentityParts } from "../namespace/identity";
+import { claimNamespace, openNamespace } from "../claim/records.js";
+import { getMemoriesForNamespace } from "../claim/replay.js";
+import { appendSemanticMemory, readSemanticValueForNamespace } from "../claim/memoryStore.js";
+import { seedClaimNamespaceSemantics } from "../claim/claimSemantics.js";
+import { normalizeHttpRequestToMeTarget } from "./meTarget.js";
+import { createEnvelope, createErrorEnvelope } from "./envelope.js";
+import { parseNamespaceIdentityParts } from "../namespace/identity.js";
 
 function toStableJson(value: unknown): string {
   if (value === null || typeof value !== "object") {

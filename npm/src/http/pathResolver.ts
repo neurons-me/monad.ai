@@ -1,8 +1,8 @@
 import type express from "express";
-import { readSemanticBranchForNamespace } from "../claim/memoryStore";
-import { resolveNamespace } from "./namespace";
-import { normalizeHttpRequestToMeTarget } from "./meTarget";
-import { createEnvelope, createErrorEnvelope } from "./envelope";
+import { readSemanticBranchForNamespace } from "../claim/memoryStore.js";
+import { resolveNamespace } from "./namespace.js";
+import { normalizeHttpRequestToMeTarget } from "./meTarget.js";
+import { createEnvelope, createErrorEnvelope } from "./envelope.js";
 
 export type ResolvedNamespacePath = {
   namespace: string;

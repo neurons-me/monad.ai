@@ -1,4 +1,5 @@
 import os from "os";
+// @ts-ignore — cleaker ships named exports at runtime but its .d.ts only declares a default
 import { composeNamespace, parseNamespaceExpression } from "cleaker";
 
 export interface NamespaceIdentityParts {

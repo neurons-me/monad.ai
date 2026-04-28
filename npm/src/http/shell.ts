@@ -4,7 +4,7 @@ import fs from "fs";
 import {
   injectNamespaceProviderShell,
   type NamespaceProviderBoot,
-} from "./provider";
+} from "./provider.js";
 
 export const GUI_PKG_DIST_DIR = process.env.GUI_PKG_DIST_DIR
   ? path.resolve(process.env.GUI_PKG_DIST_DIR)

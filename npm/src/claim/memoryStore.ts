@@ -1,6 +1,6 @@
 import crypto from "crypto";
-import { normalizeNamespaceRootName } from "../namespace/identity";
-import { getKernel, kernelPathFor, namespaceToKernelPrefix, getRootNamespace } from "../kernel/manager";
+import { normalizeNamespaceRootName } from "../namespace/identity.js";
+import { getKernel, kernelPathFor, namespaceToKernelPrefix, getRootNamespace } from "../kernel/manager.js";
 import type { Memory } from "this.me";
 
 export interface SemanticMemoryRow {
@@ -85,7 +85,7 @@ function kernelWrite(namespace: string, path: string, data: unknown, operator?: 
     const leafName = parts[parts.length - 1]!;
     const scopeParts = parts.slice(0, -1);
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const scope = scopeParts.reduce((p: any, k) => p[k], kernel as any);
+    const scope = scopeParts.reduce((p: any, k: string) => p[k], kernel as any);
     scope["="](leafName, data);
     return;
   }

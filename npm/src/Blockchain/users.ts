@@ -1,8 +1,8 @@
-import { getBlocksForIdentity } from "./blockchain";
-import { getClaim } from "../claim/records";
-import { appendSemanticMemory, buildSemanticTreeForNamespace, listSemanticMemoriesByNamespace } from "../claim/memoryStore";
-import { getRootNamespace } from "../kernel/manager";
-import { composeProjectedNamespace, normalizeNamespaceRootName } from "../namespace/identity";
+import { getBlocksForIdentity } from "./blockchain.js";
+import { getClaim } from "../claim/records.js";
+import { appendSemanticMemory, buildSemanticTreeForNamespace, listSemanticMemoriesByNamespace } from "../claim/memoryStore.js";
+import { getRootNamespace } from "../kernel/manager.js";
+import { composeProjectedNamespace, normalizeNamespaceRootName } from "../namespace/identity.js";
 
 export type UserRow = {
   username: string;

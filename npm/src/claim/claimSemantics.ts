@@ -1,5 +1,5 @@
-import { appendSemanticMemory } from "./memoryStore";
-import { buildClaimSemanticSeeds } from "./semanticCatalog";
+import { appendSemanticMemory } from "./memoryStore.js";
+import { buildClaimSemanticSeeds } from "./semanticCatalog.js";
 
 export function seedClaimNamespaceSemantics(input: {
   namespace: string;
