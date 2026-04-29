@@ -387,7 +387,23 @@
       }, 4000);
 
       function resolveMeCtor() {
-        return window.Me || window.ME || globalThis.Me || globalThis.ME;
+        const candidates = [
+          window.Me,
+          window.ME,
+          globalThis.Me,
+          globalThis.ME,
+        ];
+
+        for (const candidate of candidates) {
+          if (typeof candidate === "function") return candidate;
+          if (candidate && typeof candidate.ME === "function") return candidate.ME;
+          if (candidate && typeof candidate.default === "function") return candidate.default;
+          if (candidate && candidate.default && typeof candidate.default.ME === "function") {
+            return candidate.default.ME;
+          }
+        }
+
+        return null;
       }
 
       function loadScriptOnce(src) {

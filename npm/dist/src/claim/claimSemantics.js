@@ -1,9 +1,6 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.seedClaimNamespaceSemantics = seedClaimNamespaceSemantics;
-const memoryStore_1 = require("./memoryStore");
-const semanticCatalog_1 = require("./semanticCatalog");
-function seedClaimNamespaceSemantics(input) {
+import { appendSemanticMemory } from "./memoryStore.js";
+import { buildClaimSemanticSeeds } from "./semanticCatalog.js";
+export function seedClaimNamespaceSemantics(input) {
     const timestamp = Number(input.timestamp || Date.now());
     const namespace = String(input.namespace || "").trim().toLowerCase();
     const seeds = [
@@ -12,14 +9,14 @@ function seedClaimNamespaceSemantics(input) {
         { path: "profile.email", data: String(input.email || "").trim().toLowerCase() },
         { path: "profile.phone", data: String(input.phone || "").trim() },
         { path: "auth.claimed_at", data: timestamp },
-        ...(0, semanticCatalog_1.buildClaimSemanticSeeds)({
+        ...buildClaimSemanticSeeds({
             namespace,
             username: input.username,
             passwordHash: input.passwordHash,
         }),
     ];
     for (const seed of seeds) {
-        (0, memoryStore_1.appendSemanticMemory)({
+        appendSemanticMemory({
             namespace,
             path: seed.path,
             operator: seed.operator || "=",

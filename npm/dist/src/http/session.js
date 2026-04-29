@@ -1,16 +1,10 @@
-"use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.createSessionRouter = createSessionRouter;
-const express_1 = __importDefault(require("express"));
-const crypto_1 = __importDefault(require("crypto"));
-const memoryStore_1 = require("../claim/memoryStore");
-const meTarget_1 = require("./meTarget");
-const envelope_1 = require("./envelope");
-const identity_1 = require("../namespace/identity");
-const namespace_1 = require("./namespace");
+import express from "express";
+import crypto from "crypto";
+import { appendSemanticMemory, consumeSessionNonce, createSessionNonce, getHostStatus, listHostMemoryHistory, listHostsByNamespace, rebuildAuthorizedHostsProjection, } from "../claim/memoryStore.js";
+import { normalizeHttpRequestToMeTarget } from "./meTarget.js";
+import { createEnvelope, createErrorEnvelope } from "./envelope.js";
+import { composeProjectedNamespace } from "../namespace/identity.js";
+import { resolveNamespace, resolveNamespaceProjectionRoot } from "./namespace.js";
 function normalizeUsername(input) {
     return String(input || "").trim().toLowerCase();
 }
@@ -56,12 +50,12 @@ function deriveHostLabel(input) {
     return label || "host";
 }
 function resolveSessionRootNamespace(req) {
-    const resolved = (0, namespace_1.resolveNamespaceProjectionRoot)((0, namespace_1.resolveNamespace)(req));
+    const resolved = resolveNamespaceProjectionRoot(resolveNamespace(req));
     return String(resolved || "").trim().toLowerCase();
 }
 function resolveUserNamespace(req, username) {
     const root = resolveSessionRootNamespace(req);
-    return (0, identity_1.composeProjectedNamespace)(username, root);
+    return composeProjectedNamespace(username, root);
 }
 function computeSessionExpiry(iatMs, ttlSeconds) {
     const ttl = Number.isFinite(ttlSeconds) ? Number(ttlSeconds) : 3600;
@@ -71,11 +65,11 @@ function computeSessionExpiry(iatMs, ttlSeconds) {
 function signSessionToken(session) {
     const payload = Buffer.from(JSON.stringify(session)).toString("base64url");
     const secret = process.env.SESSION_SIGNING_SECRET || "monad-dev-secret";
-    const sig = crypto_1.default.createHmac("sha256", secret).update(payload).digest("base64url");
+    const sig = crypto.createHmac("sha256", secret).update(payload).digest("base64url");
     return `${payload}.${sig}`;
 }
 function verifyDaemonAttestation(username, nonce, hostFingerprint, daemonPublicKey, attestation) {
-    const verifier = crypto_1.default.createVerify("SHA256");
+    const verifier = crypto.createVerify("SHA256");
     const message = `${username}:${nonce}:${hostFingerprint}`;
     verifier.update(message);
     verifier.end();
@@ -100,37 +94,37 @@ function makeCloudSession(body) {
             : ["profile:read", "me:public"],
     };
 }
-function createSessionRouter() {
-    const router = express_1.default.Router();
+export function createSessionRouter() {
+    const router = express.Router();
     // Ensure read-model projection can recover after daemon/server restarts.
-    (0, memoryStore_1.rebuildAuthorizedHostsProjection)();
+    rebuildAuthorizedHostsProjection();
     router.post("/api/v1/session/nonce", (req, res) => {
-        const target = (0, meTarget_1.normalizeHttpRequestToMeTarget)(req);
+        const target = normalizeHttpRequestToMeTarget(req);
         const body = (req.body || {});
         const username = normalizeUsername(body.username);
         if (!username) {
-            return res.status(400).json((0, envelope_1.createErrorEnvelope)(target, { error: "USERNAME_REQUIRED" }));
+            return res.status(400).json(createErrorEnvelope(target, { error: "USERNAME_REQUIRED" }));
         }
-        const response = (0, memoryStore_1.createSessionNonce)(username, 2 * 60 * 1000);
-        return res.json((0, envelope_1.createEnvelope)(target, { ...response }));
+        const response = createSessionNonce(username, 2 * 60 * 1000);
+        return res.json(createEnvelope(target, { ...response }));
     });
     router.post("/api/v1/session/cloud", (req, res) => {
-        const target = (0, meTarget_1.normalizeHttpRequestToMeTarget)(req);
+        const target = normalizeHttpRequestToMeTarget(req);
         const body = (req.body || {});
         const username = normalizeUsername(body.username);
         if (!username) {
-            return res.status(400).json((0, envelope_1.createErrorEnvelope)(target, { error: "USERNAME_REQUIRED" }));
+            return res.status(400).json(createErrorEnvelope(target, { error: "USERNAME_REQUIRED" }));
         }
         const session = makeCloudSession({ ...body, username });
         const namespace = resolveUserNamespace(req, username);
-        (0, memoryStore_1.appendSemanticMemory)({
+        appendSemanticMemory({
             namespace,
             path: `session.mode`,
             operator: "=",
             data: "cloud",
             timestamp: session.iat,
         });
-        (0, memoryStore_1.appendSemanticMemory)({
+        appendSemanticMemory({
             namespace,
             path: `session.last_seen`,
             operator: "=",
@@ -138,10 +132,10 @@ function createSessionRouter() {
             timestamp: session.iat,
         });
         const token = signSessionToken(session);
-        return res.json((0, envelope_1.createEnvelope)(target, { session, token }));
+        return res.json(createEnvelope(target, { session, token }));
     });
     router.post("/api/v1/session/host-verify", (req, res) => {
-        const target = (0, meTarget_1.normalizeHttpRequestToMeTarget)(req);
+        const target = normalizeHttpRequestToMeTarget(req);
         const body = (req.body || {});
         const username = normalizeUsername(body.username);
         const nonce = String(body.nonce || "").trim();
@@ -157,18 +151,18 @@ function createSessionRouter() {
         });
         const hostname = String(body.host?.hostname || "").trim() || parseEndpointHost(localEndpoint);
         if (!username || !nonce || !hostFingerprint || !daemonPublicKey || !attestation) {
-            return res.status(400).json((0, envelope_1.createErrorEnvelope)(target, { error: "INVALID_HOST_VERIFY_PAYLOAD" }));
+            return res.status(400).json(createErrorEnvelope(target, { error: "INVALID_HOST_VERIFY_PAYLOAD" }));
         }
-        if (!(0, memoryStore_1.consumeSessionNonce)(username, nonce)) {
-            return res.status(403).json((0, envelope_1.createErrorEnvelope)(target, { error: "NONCE_INVALID_OR_EXPIRED" }));
+        if (!consumeSessionNonce(username, nonce)) {
+            return res.status(403).json(createErrorEnvelope(target, { error: "NONCE_INVALID_OR_EXPIRED" }));
         }
         const verified = verifyDaemonAttestation(username, nonce, hostFingerprint, daemonPublicKey, attestation);
         if (!verified) {
-            return res.status(403).json((0, envelope_1.createErrorEnvelope)(target, { error: "ATTESTATION_INVALID" }));
+            return res.status(403).json(createErrorEnvelope(target, { error: "ATTESTATION_INVALID" }));
         }
         const namespace = resolveUserNamespace(req, username);
-        if ((0, memoryStore_1.getHostStatus)(namespace, username, hostFingerprint) === "revoked") {
-            return res.status(403).json((0, envelope_1.createErrorEnvelope)(target, { error: "HOST_REVOKED" }));
+        if (getHostStatus(namespace, username, hostFingerprint) === "revoked") {
+            return res.status(403).json(createErrorEnvelope(target, { error: "HOST_REVOKED" }));
         }
         const iat = Date.now();
         const exp = computeSessionExpiry(iat, body.ttlSeconds);
@@ -187,63 +181,63 @@ function createSessionRouter() {
                 attestation,
             },
         };
-        (0, memoryStore_1.appendSemanticMemory)({
+        appendSemanticMemory({
             namespace,
             path: `host.${hostLabel}.fingerprint`,
             operator: "=",
             data: hostFingerprint,
             timestamp: iat,
         });
-        (0, memoryStore_1.appendSemanticMemory)({
+        appendSemanticMemory({
             namespace,
             path: `host.${hostLabel}.label`,
             operator: "=",
             data: hostLabel,
             timestamp: iat,
         });
-        (0, memoryStore_1.appendSemanticMemory)({
+        appendSemanticMemory({
             namespace,
             path: `host.${hostLabel}.hostname`,
             operator: "=",
             data: hostname,
             timestamp: iat,
         });
-        (0, memoryStore_1.appendSemanticMemory)({
+        appendSemanticMemory({
             namespace,
             path: `host.${hostLabel}.status`,
             operator: "=",
             data: "authorized",
             timestamp: iat,
         });
-        (0, memoryStore_1.appendSemanticMemory)({
+        appendSemanticMemory({
             namespace,
             path: `host.${hostLabel}.capabilities`,
             operator: "=",
             data: capabilities,
             timestamp: iat,
         });
-        (0, memoryStore_1.appendSemanticMemory)({
+        appendSemanticMemory({
             namespace,
             path: `host.${hostLabel}.last_seen`,
             operator: "=",
             data: iat,
             timestamp: iat,
         });
-        (0, memoryStore_1.appendSemanticMemory)({
+        appendSemanticMemory({
             namespace,
             path: `host.${hostLabel}.local_endpoint`,
             operator: "=",
             data: localEndpoint,
             timestamp: iat,
         });
-        (0, memoryStore_1.appendSemanticMemory)({
+        appendSemanticMemory({
             namespace,
             path: `host.${hostLabel}.public_key`,
             operator: "=",
             data: daemonPublicKey,
             timestamp: iat,
         });
-        (0, memoryStore_1.appendSemanticMemory)({
+        appendSemanticMemory({
             namespace,
             path: `host.${hostLabel}.attestation`,
             operator: "=",
@@ -251,14 +245,14 @@ function createSessionRouter() {
             timestamp: iat,
             signature: attestation,
         });
-        (0, memoryStore_1.appendSemanticMemory)({
+        appendSemanticMemory({
             namespace,
             path: `session.mode`,
             operator: "=",
             data: "host",
             timestamp: iat,
         });
-        (0, memoryStore_1.appendSemanticMemory)({
+        appendSemanticMemory({
             namespace,
             path: `session.last_seen`,
             operator: "=",
@@ -266,16 +260,16 @@ function createSessionRouter() {
             timestamp: iat,
         });
         const token = signSessionToken(session);
-        return res.json((0, envelope_1.createEnvelope)(target, { session, token }));
+        return res.json(createEnvelope(target, { session, token }));
     });
     router.get("/api/v1/hosts/:username", (req, res) => {
-        const target = (0, meTarget_1.normalizeHttpRequestToMeTarget)(req);
+        const target = normalizeHttpRequestToMeTarget(req);
         const username = normalizeUsername(String(req.params.username || ""));
         if (!username) {
-            return res.status(400).json((0, envelope_1.createErrorEnvelope)(target, { error: "USERNAME_REQUIRED" }));
+            return res.status(400).json(createErrorEnvelope(target, { error: "USERNAME_REQUIRED" }));
         }
         const namespace = resolveUserNamespace(req, username);
-        const hosts = (0, memoryStore_1.listHostsByNamespace)(namespace, username).map((host) => ({
+        const hosts = listHostsByNamespace(namespace, username).map((host) => ({
             id: host.id,
             namespace: host.namespace,
             host_key: host.host_key,
@@ -299,22 +293,22 @@ function createSessionRouter() {
             last_used: host.last_used,
             revoked_at: host.revoked_at,
         }));
-        return res.json((0, envelope_1.createEnvelope)(target, {
+        return res.json(createEnvelope(target, {
             username,
             hosts,
             count: hosts.length,
         }));
     });
     router.get("/api/v1/hosts/:username/:fingerprint/history", (req, res) => {
-        const target = (0, meTarget_1.normalizeHttpRequestToMeTarget)(req);
+        const target = normalizeHttpRequestToMeTarget(req);
         const username = normalizeUsername(String(req.params.username || ""));
         const fingerprint = String(req.params.fingerprint || "").trim();
         const limit = Number(req.query?.limit || 200);
         if (!username || !fingerprint) {
-            return res.status(400).json((0, envelope_1.createErrorEnvelope)(target, { error: "INVALID_HISTORY_PAYLOAD" }));
+            return res.status(400).json(createErrorEnvelope(target, { error: "INVALID_HISTORY_PAYLOAD" }));
         }
         const namespace = resolveUserNamespace(req, username);
-        const memories = (0, memoryStore_1.listHostMemoryHistory)(namespace, username, fingerprint, limit).map((m) => ({
+        const memories = listHostMemoryHistory(namespace, username, fingerprint, limit).map((m) => ({
             id: m.id,
             namespace: m.namespace,
             host_key: m.host_key,
@@ -328,7 +322,7 @@ function createSessionRouter() {
             signature: m.signature,
             timestamp: m.timestamp,
         }));
-        return res.json((0, envelope_1.createEnvelope)(target, {
+        return res.json(createEnvelope(target, {
             username,
             fingerprint,
             memories,
@@ -336,33 +330,33 @@ function createSessionRouter() {
         }));
     });
     router.post("/api/v1/hosts/revoke", (req, res) => {
-        const target = (0, meTarget_1.normalizeHttpRequestToMeTarget)(req);
+        const target = normalizeHttpRequestToMeTarget(req);
         const body = (req.body || {});
         const username = normalizeUsername(body.username);
         const hostFingerprint = String(body.hostFingerprint || "").trim();
         if (!username || !hostFingerprint) {
-            return res.status(400).json((0, envelope_1.createErrorEnvelope)(target, { error: "INVALID_REVOKE_PAYLOAD" }));
+            return res.status(400).json(createErrorEnvelope(target, { error: "INVALID_REVOKE_PAYLOAD" }));
         }
         const now = Date.now();
         const namespace = resolveUserNamespace(req, username);
-        const hosts = (0, memoryStore_1.listHostsByNamespace)(namespace, username);
+        const hosts = listHostsByNamespace(namespace, username);
         const host = hosts.find((entry) => entry.fingerprint === hostFingerprint);
         const hostKey = host?.host_key || normalizeHostKey(hostFingerprint);
-        (0, memoryStore_1.appendSemanticMemory)({
+        appendSemanticMemory({
             namespace,
             path: `host.${hostKey}.status`,
             operator: "=",
             data: "revoked",
             timestamp: now,
         });
-        (0, memoryStore_1.appendSemanticMemory)({
+        appendSemanticMemory({
             namespace,
             path: `host.${hostKey}.last_seen`,
             operator: "=",
             data: now,
             timestamp: now,
         });
-        return res.json((0, envelope_1.createEnvelope)(target, {
+        return res.json(createEnvelope(target, {
             revoked: true,
             username,
             hostFingerprint,

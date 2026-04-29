@@ -1,7 +1,3 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.createEnvelope = createEnvelope;
-exports.createErrorEnvelope = createErrorEnvelope;
 function isNamespaceShape(value) {
     if (!value || typeof value !== "object")
         return false;
@@ -48,7 +44,7 @@ function nestResponseFields(normalizedTarget, body) {
     }
     return { target, remaining };
 }
-function createEnvelope(target, body = {}) {
+export function createEnvelope(target, body = {}) {
     const normalizedTarget = normalizeTarget(target);
     const normalizedBody = normalizeEnvelopeBody(body, normalizedTarget);
     const { target: nestedTarget, remaining } = nestResponseFields(normalizedTarget, normalizedBody);
@@ -58,7 +54,7 @@ function createEnvelope(target, body = {}) {
         ...remaining,
     };
 }
-function createErrorEnvelope(target, body = {}) {
+export function createErrorEnvelope(target, body = {}) {
     const normalizedTarget = normalizeTarget(target);
     const normalizedBody = normalizeEnvelopeBody(body, normalizedTarget);
     const { target: nestedTarget, remaining } = nestResponseFields(normalizedTarget, normalizedBody);

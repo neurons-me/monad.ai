@@ -3,19 +3,38 @@
   <img src="https://res.cloudinary.com/dkwnxf6gm/image/upload/v1762832023/me.profile-removebg-preview_1_bskwyz.png" alt=".me Logo" width="203" />
 </picture>
 
-
 # monad.ai
 ###### Serve `me://` 
 Your computer has a name on the network.`monad.ai` turns that name into something meaningful — a place where your data lives, your identity is anchored, and any app can find what it needs about you.
 
 ------
 
-## The idea in one sentence:
-Run this on any machine, and that machine becomes **your node** — a place that knows who you are and answers questions about you.
+### Git Clone Repository
+
+```bash
+git clone https://github.com/neurons-me/monad.ai.git
+cd monad.ai/npm
+npm install
+```
+
+**Then run providing your local seed:**
+
+```bash
+ME_SEED="mi-seed-local-dev" npm run dev
+```
+
+If you want to run the compiled build:
+
+```bash
+ME_SEED="mi-seed-local-dev" node dist/server.js
+```
+
+Run this on any machine, and that machine becomes **your node** — a place that knows **who you are** and answers questions about you.
 
 ------
 
 ## What it looks like:
+
 You install it. You run it. Now you have a personal server that speaks a simple language:
 
 ```
@@ -34,7 +53,7 @@ It has one job: **answer questions about a namespace**.
 
 A **namespace** is just a name — like a domain name`jabellae.cleaker.me` or `myComputerHostName.local` your hostname on a local network.
 
-When an app asks:
+**When an app asks:**
 
 ```
 GET /profile/name
@@ -43,7 +62,7 @@ Host: suiGn.cleaker.me
 
 It gets back: `"Sui Gn"`
 
-That's it.
+*That's it.*
 
 ------
 

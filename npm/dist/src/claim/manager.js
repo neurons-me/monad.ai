@@ -1,18 +1,7 @@
-"use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.getPersistentClaimPath = getPersistentClaimPath;
-exports.buildPersistentClaimBundle = buildPersistentClaimBundle;
-exports.writePersistentClaimBundle = writePersistentClaimBundle;
-exports.loadPersistentClaim = loadPersistentClaim;
-exports.verifyPersistentClaim = verifyPersistentClaim;
-exports.deletePersistentClaim = deletePersistentClaim;
-const crypto_1 = __importDefault(require("crypto"));
-const fs_1 = __importDefault(require("fs"));
-const path_1 = __importDefault(require("path"));
-const identity_1 = require("../namespace/identity");
+import crypto from "crypto";
+import fs from "fs";
+import path from "path";
+import { normalizeNamespaceIdentity } from "../namespace/identity.js";
 function stableStringify(value) {
     if (value === null || typeof value !== "object") {
         return JSON.stringify(value);
@@ -26,10 +15,10 @@ function stableStringify(value) {
     return `{${entries.join(",")}}`;
 }
 function normalizeNamespace(raw) {
-    return (0, identity_1.normalizeNamespaceIdentity)(raw);
+    return normalizeNamespaceIdentity(raw);
 }
 function ensureDirectory(dirPath) {
-    fs_1.default.mkdirSync(dirPath, { recursive: true });
+    fs.mkdirSync(dirPath, { recursive: true });
 }
 function sanitizeNamespaceFilename(namespace) {
     return normalizeNamespace(namespace).replace(/[^a-z0-9._-]/g, "_");
@@ -42,7 +31,7 @@ function normalizePem(key, type) {
 }
 function normalizePublicPem(raw) {
     try {
-        const key = crypto_1.default.createPublicKey(String(raw || "").trim());
+        const key = crypto.createPublicKey(String(raw || "").trim());
         return {
             pem: normalizePem(key, "public"),
             alg: key.asymmetricKeyType || "unknown",
@@ -54,8 +43,8 @@ function normalizePublicPem(raw) {
 }
 function normalizePrivatePem(raw) {
     try {
-        const key = crypto_1.default.createPrivateKey(String(raw || "").trim());
-        const publicKey = crypto_1.default.createPublicKey(key);
+        const key = crypto.createPrivateKey(String(raw || "").trim());
+        const publicKey = crypto.createPublicKey(key);
         return {
             privatePem: normalizePem(key, "private"),
             publicPem: normalizePem(publicKey, "public"),
@@ -67,7 +56,7 @@ function normalizePrivatePem(raw) {
     }
 }
 function generateEd25519Keypair() {
-    const pair = crypto_1.default.generateKeyPairSync("ed25519");
+    const pair = crypto.generateKeyPairSync("ed25519");
     return {
         privatePem: normalizePem(pair.privateKey, "private"),
         publicPem: normalizePem(pair.publicKey, "public"),
@@ -75,7 +64,7 @@ function generateEd25519Keypair() {
     };
 }
 function createKeyKid(publicKeyPem) {
-    const digest = crypto_1.default
+    const digest = crypto
         .createHash("sha256")
         .update(String(publicKeyPem || "").trim())
         .digest("hex");
@@ -90,19 +79,19 @@ function buildPublicKeyRecord(pem, alg, source) {
     };
 }
 function signPayload(privateKeyPem, payload) {
-    const privateKey = crypto_1.default.createPrivateKey(privateKeyPem);
+    const privateKey = crypto.createPrivateKey(privateKeyPem);
     const keyType = privateKey.asymmetricKeyType || "unknown";
     const data = Buffer.from(payload);
     if (keyType === "ed25519" || keyType === "ed448") {
         return {
             alg: keyType,
-            value: crypto_1.default.sign(null, data, privateKey).toString("base64"),
+            value: crypto.sign(null, data, privateKey).toString("base64"),
             encoding: "base64",
         };
     }
     return {
         alg: `${keyType}-sha256`,
-        value: crypto_1.default.sign("sha256", data, privateKey).toString("base64"),
+        value: crypto.sign("sha256", data, privateKey).toString("base64"),
         encoding: "base64",
     };
 }
@@ -110,34 +99,34 @@ function verifyPayloadSignature(claim) {
     const { signature, ...unsigned } = claim;
     const data = Buffer.from(stableStringify(unsigned));
     const sig = Buffer.from(String(signature.value || ""), "base64");
-    const proofKey = crypto_1.default.createPublicKey(claim.proofKey.key);
+    const proofKey = crypto.createPublicKey(claim.proofKey.key);
     const keyType = proofKey.asymmetricKeyType || claim.proofKey.alg;
     if (keyType === "ed25519" || keyType === "ed448") {
-        return crypto_1.default.verify(null, data, proofKey, sig);
+        return crypto.verify(null, data, proofKey, sig);
     }
-    return crypto_1.default.verify("sha256", data, proofKey, sig);
+    return crypto.verify("sha256", data, proofKey, sig);
 }
 function getClaimStorePaths() {
-    const claimsDir = path_1.default.resolve(process.cwd(), String(process.env.MONAD_CLAIM_DIR || "env/claims"));
+    const claimsDir = path.resolve(process.cwd(), String(process.env.MONAD_CLAIM_DIR || "env/claims"));
     return {
         claimsDir,
-        keysDir: path_1.default.join(claimsDir, ".keys"),
+        keysDir: path.join(claimsDir, ".keys"),
     };
 }
-function getPersistentClaimPath(namespace) {
+export function getPersistentClaimPath(namespace) {
     const { claimsDir } = getClaimStorePaths();
-    return path_1.default.join(claimsDir, `${sanitizeNamespaceFilename(namespace)}.json`);
+    return path.join(claimsDir, `${sanitizeNamespaceFilename(namespace)}.json`);
 }
 function getPersistentClaimPrivateKeyPath(namespace) {
     const { keysDir } = getClaimStorePaths();
-    return path_1.default.join(keysDir, `${sanitizeNamespaceFilename(namespace)}.private.pem`);
+    return path.join(keysDir, `${sanitizeNamespaceFilename(namespace)}.private.pem`);
 }
 function resolveStoredProofKey(namespace) {
     const privateKeyPath = getPersistentClaimPrivateKeyPath(namespace);
-    if (!fs_1.default.existsSync(privateKeyPath)) {
+    if (!fs.existsSync(privateKeyPath)) {
         return null;
     }
-    const stored = normalizePrivatePem(fs_1.default.readFileSync(privateKeyPath, "utf8"));
+    const stored = normalizePrivatePem(fs.readFileSync(privateKeyPath, "utf8"));
     return {
         privateKeyPath,
         privatePem: stored.privatePem,
@@ -213,7 +202,7 @@ function resolveClaimKeys(input) {
         persistPrivateKey: true,
     };
 }
-function buildPersistentClaimBundle(input) {
+export function buildPersistentClaimBundle(input) {
     const namespace = normalizeNamespace(input.namespace);
     const identityHash = String(input.identityHash || "").trim();
     const issuedAt = Number(input.issuedAt || Date.now());
@@ -250,29 +239,29 @@ function buildPersistentClaimBundle(input) {
         persistPrivateKey: resolved.persistPrivateKey,
     };
 }
-function writePersistentClaimBundle(bundle) {
+export function writePersistentClaimBundle(bundle) {
     const { claimsDir, keysDir } = getClaimStorePaths();
     ensureDirectory(claimsDir);
     ensureDirectory(keysDir);
     try {
         if (bundle.privateKeyPath && bundle.privateKeyPem && bundle.persistPrivateKey) {
-            fs_1.default.writeFileSync(bundle.privateKeyPath, bundle.privateKeyPem, { mode: 0o600 });
-            fs_1.default.chmodSync(bundle.privateKeyPath, 0o600);
+            fs.writeFileSync(bundle.privateKeyPath, bundle.privateKeyPem, { mode: 0o600 });
+            fs.chmodSync(bundle.privateKeyPath, 0o600);
         }
-        fs_1.default.writeFileSync(bundle.summary.claimPath, `${JSON.stringify(bundle.summary.claim, null, 2)}\n`, "utf8");
+        fs.writeFileSync(bundle.summary.claimPath, `${JSON.stringify(bundle.summary.claim, null, 2)}\n`, "utf8");
         return bundle.summary;
     }
     catch (error) {
         try {
-            if (fs_1.default.existsSync(bundle.summary.claimPath)) {
-                fs_1.default.rmSync(bundle.summary.claimPath, { force: true });
+            if (fs.existsSync(bundle.summary.claimPath)) {
+                fs.rmSync(bundle.summary.claimPath, { force: true });
             }
         }
         catch {
         }
         try {
-            if (bundle.privateKeyPath && bundle.persistPrivateKey && fs_1.default.existsSync(bundle.privateKeyPath)) {
-                fs_1.default.rmSync(bundle.privateKeyPath, { force: true });
+            if (bundle.privateKeyPath && bundle.persistPrivateKey && fs.existsSync(bundle.privateKeyPath)) {
+                fs.rmSync(bundle.privateKeyPath, { force: true });
             }
         }
         catch {
@@ -280,18 +269,18 @@ function writePersistentClaimBundle(bundle) {
         throw error;
     }
 }
-function loadPersistentClaim(namespace) {
+export function loadPersistentClaim(namespace) {
     const claimPath = getPersistentClaimPath(namespace);
-    if (!fs_1.default.existsSync(claimPath))
+    if (!fs.existsSync(claimPath))
         return null;
-    const raw = fs_1.default.readFileSync(claimPath, "utf8");
+    const raw = fs.readFileSync(claimPath, "utf8");
     const claim = JSON.parse(raw);
     return {
         claimPath,
         claim,
     };
 }
-function verifyPersistentClaim(namespace) {
+export function verifyPersistentClaim(namespace) {
     try {
         const loaded = loadPersistentClaim(namespace);
         if (!loaded)
@@ -302,19 +291,19 @@ function verifyPersistentClaim(namespace) {
         return false;
     }
 }
-function deletePersistentClaim(namespace) {
+export function deletePersistentClaim(namespace) {
     const claimPath = getPersistentClaimPath(namespace);
     const privateKeyPath = getPersistentClaimPrivateKeyPath(namespace);
     try {
-        if (fs_1.default.existsSync(claimPath)) {
-            fs_1.default.rmSync(claimPath, { force: true });
+        if (fs.existsSync(claimPath)) {
+            fs.rmSync(claimPath, { force: true });
         }
     }
     catch {
     }
     try {
-        if (fs_1.default.existsSync(privateKeyPath)) {
-            fs_1.default.rmSync(privateKeyPath, { force: true });
+        if (fs.existsSync(privateKeyPath)) {
+            fs.rmSync(privateKeyPath, { force: true });
         }
     }
     catch {

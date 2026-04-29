@@ -1,12 +1,4 @@
-"use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.getSurfaceTelemetrySnapshot = getSurfaceTelemetrySnapshot;
-exports.recordSurfaceRequest = recordSurfaceRequest;
-exports.attachSurfaceStreamClient = attachSurfaceStreamClient;
-const os_1 = __importDefault(require("os"));
+import os from "os";
 const MAX_RECENT_REQUESTS = Math.max(20, Math.min(500, Number(process.env.MONAD_SURFACE_RECENT_REQUESTS || 120)));
 const REQUEST_RATE_WINDOW_MS = Math.max(1000, Math.min(60000, Number(process.env.MONAD_SURFACE_RATE_WINDOW_MS || 10000)));
 const REQUEST_RATE_PRESSURE_THRESHOLD = Math.max(1, Number(process.env.MONAD_SURFACE_REQUEST_THRESHOLD || 40));
@@ -27,8 +19,8 @@ function clamp01(value) {
     return value;
 }
 function computeCpuUsageRatio() {
-    const cores = Math.max(1, os_1.default.cpus()?.length || 1);
-    const load = Number(os_1.default.loadavg?.()[0] || 0);
+    const cores = Math.max(1, os.cpus()?.length || 1);
+    const load = Number(os.loadavg?.()[0] || 0);
     return clamp01(load / cores);
 }
 function getRecentRequestRatePer10s(now) {
@@ -39,7 +31,7 @@ function computeRequestPressure(now) {
     const rate = getRecentRequestRatePer10s(now);
     return clamp01(rate / REQUEST_RATE_PRESSURE_THRESHOLD);
 }
-function getSurfaceTelemetrySnapshot() {
+export function getSurfaceTelemetrySnapshot() {
     const now = Date.now();
     const cpuUsage = computeCpuUsageRatio();
     const requestPressure = computeRequestPressure(now);
@@ -80,7 +72,7 @@ function broadcast(event, data) {
         writeSseEvent(client.res, event, data);
     }
 }
-function recordSurfaceRequest(input) {
+export function recordSurfaceRequest(input) {
     const event = {
         id: nextRequestId++,
         timestamp: typeof input.timestamp === "number" ? input.timestamp : Date.now(),
@@ -104,7 +96,7 @@ function recordSurfaceRequest(input) {
         telemetry: getSurfaceTelemetrySnapshot(),
     });
 }
-function attachSurfaceStreamClient(req, res) {
+export function attachSurfaceStreamClient(req, res) {
     const client = {
         id: nextClientId++,
         res,

@@ -1,36 +1,16 @@
-"use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.createSessionNonce = createSessionNonce;
-exports.consumeSessionNonce = consumeSessionNonce;
-exports.appendSemanticMemory = appendSemanticMemory;
-exports.listSemanticMemoriesByNamespace = listSemanticMemoriesByNamespace;
-exports.listSemanticMemoriesByNamespaceBranch = listSemanticMemoriesByNamespaceBranch;
-exports.buildSemanticTreeForNamespace = buildSemanticTreeForNamespace;
-exports.buildSemanticBranchTreeForNamespace = buildSemanticBranchTreeForNamespace;
-exports.readSemanticBranchForNamespace = readSemanticBranchForNamespace;
-exports.readSemanticValueForNamespace = readSemanticValueForNamespace;
-exports.listSemanticMemoriesByRootNamespace = listSemanticMemoriesByRootNamespace;
-exports.listHostsByNamespace = listHostsByNamespace;
-exports.listHostsByUsername = listHostsByUsername;
-exports.getHostStatus = getHostStatus;
-exports.listHostMemoryHistory = listHostMemoryHistory;
-exports.rebuildAuthorizedHostsProjection = rebuildAuthorizedHostsProjection;
-const crypto_1 = __importDefault(require("crypto"));
-const identity_1 = require("../namespace/identity");
-const manager_1 = require("../kernel/manager");
+import crypto from "crypto";
+import { normalizeNamespaceRootName } from "../namespace/identity.js";
+import { getKernel, kernelPathFor, namespaceToKernelPrefix, getRootNamespace } from "../kernel/manager.js";
 const _nonces = new Map();
-function createSessionNonce(usernameInput, ttlMs = 120000) {
+export function createSessionNonce(usernameInput, ttlMs = 120000) {
     const username = usernameInput.trim().toLowerCase();
     const iat = Date.now();
     const exp = iat + Math.max(1000, ttlMs);
-    const nonce = crypto_1.default.randomBytes(24).toString("base64url");
+    const nonce = crypto.randomBytes(24).toString("base64url");
     _nonces.set(username, { nonce, iat, exp });
     return { username, nonce, iat, exp };
 }
-function consumeSessionNonce(usernameInput, nonceInput) {
+export function consumeSessionNonce(usernameInput, nonceInput) {
     const username = usernameInput.trim().toLowerCase();
     const nonce = nonceInput.trim();
     if (!username || !nonce)
@@ -45,8 +25,8 @@ function consumeSessionNonce(usernameInput, nonceInput) {
 }
 // ─── helpers ─────────────────────────────────────────────────────────────────
 function kernelWrite(namespace, path, data, operator) {
-    const kernel = (0, manager_1.getKernel)();
-    const kpath = (0, manager_1.kernelPathFor)(namespace, path);
+    const kernel = getKernel();
+    const kpath = kernelPathFor(namespace, path);
     if (operator === "-") {
         kernel.execute(`me://self:write/${kpath.split(".").join("/")}`, undefined);
         return;
@@ -64,7 +44,7 @@ function kernelWrite(namespace, path, data, operator) {
     kernel.execute(`me://self:write/${kpath.split(".").join("/")}`, data);
 }
 function kernelRead(namespace, path) {
-    const kpath = (0, manager_1.kernelPathFor)(namespace, path);
+    const kpath = kernelPathFor(namespace, path);
     const mems = allMemories();
     for (let i = mems.length - 1; i >= 0; i--) {
         const m = mems[i];
@@ -76,7 +56,7 @@ function kernelRead(namespace, path) {
 }
 function memoryToRow(mem, index) {
     const kpath = mem.path;
-    let namespace = (0, manager_1.getRootNamespace)();
+    let namespace = getRootNamespace();
     let path = kpath;
     if (kpath.startsWith("users.")) {
         const rest = kpath.slice("users.".length);
@@ -84,7 +64,7 @@ function memoryToRow(mem, index) {
         if (dot !== -1) {
             const username = rest.slice(0, dot);
             path = rest.slice(dot + 1);
-            namespace = `${username}.${(0, manager_1.getRootNamespace)()}`;
+            namespace = `${username}.${getRootNamespace()}`;
         }
     }
     return {
@@ -100,7 +80,7 @@ function memoryToRow(mem, index) {
     };
 }
 function allMemories() {
-    return (0, manager_1.getKernel)().memories;
+    return getKernel().memories;
 }
 function memoriesForPrefix(prefix) {
     if (!prefix) {
@@ -122,7 +102,7 @@ function memoriesForPrefix(prefix) {
     return allMemories().filter((m) => m.path === p || m.path.startsWith(`${p}.`));
 }
 // ─── core memory API ─────────────────────────────────────────────────────────
-function appendSemanticMemory(input) {
+export function appendSemanticMemory(input) {
     const namespace = input.namespace.trim().toLowerCase();
     const path = input.path.trim();
     if (!namespace || !path)
@@ -134,24 +114,24 @@ function appendSemanticMemory(input) {
         throw new Error("MEMORY_WRITE_FAILED");
     return memoryToRow(last, mems.length - 1);
 }
-function listSemanticMemoriesByNamespace(namespaceInput, options = {}) {
+export function listSemanticMemoriesByNamespace(namespaceInput, options = {}) {
     const namespace = namespaceInput.trim().toLowerCase();
     if (!namespace)
         return [];
-    const prefix = (0, manager_1.namespaceToKernelPrefix)(namespace);
+    const prefix = namespaceToKernelPrefix(namespace);
     const pathFilter = options.prefix ? `${prefix ? prefix + "." : ""}${options.prefix}` : prefix;
     const limit = Math.max(1, Math.min(5000, options.limit ?? 500));
     const mems = memoriesForPrefix(pathFilter);
     return mems.slice(-limit).map((m, i) => memoryToRow(m, i));
 }
-function listSemanticMemoriesByNamespaceBranch(namespaceInput, branchPathInput, options = {}) {
+export function listSemanticMemoriesByNamespaceBranch(namespaceInput, branchPathInput, options = {}) {
     const namespace = namespaceInput.trim().toLowerCase();
     if (!namespace)
         return [];
     const branchPath = branchPathInput.split(".").filter(Boolean).join(".");
     if (!branchPath)
         return listSemanticMemoriesByNamespace(namespace, options);
-    const prefix = (0, manager_1.namespaceToKernelPrefix)(namespace);
+    const prefix = namespaceToKernelPrefix(namespace);
     const fullBranch = prefix ? `${prefix}.${branchPath}` : branchPath;
     const limit = Math.max(1, Math.min(5000, options.limit ?? 500));
     const mems = memoriesForPrefix(fullBranch);
@@ -189,7 +169,7 @@ function deleteDeepValue(target, pathInput) {
     }
     delete cursor[parts[parts.length - 1]];
 }
-function buildSemanticTreeForNamespace(namespaceInput, options = {}) {
+export function buildSemanticTreeForNamespace(namespaceInput, options = {}) {
     const memories = listSemanticMemoriesByNamespace(namespaceInput, { ...options, limit: options.limit ?? 10000 });
     const tree = {};
     for (const mem of memories) {
@@ -201,7 +181,7 @@ function buildSemanticTreeForNamespace(namespaceInput, options = {}) {
     }
     return tree;
 }
-function buildSemanticBranchTreeForNamespace(namespaceInput, branchPathInput, options = {}) {
+export function buildSemanticBranchTreeForNamespace(namespaceInput, branchPathInput, options = {}) {
     const memories = listSemanticMemoriesByNamespaceBranch(namespaceInput, branchPathInput, { limit: options.limit ?? 10000 });
     const tree = {};
     for (const mem of memories) {
@@ -223,25 +203,25 @@ function getDeepValue(target, pathInput) {
     }
     return cursor;
 }
-function readSemanticBranchForNamespace(namespaceInput, pathInput) {
+export function readSemanticBranchForNamespace(namespaceInput, pathInput) {
     const path = pathInput.split(".").filter(Boolean).join(".");
     if (!path)
         return buildSemanticTreeForNamespace(namespaceInput);
     const tree = buildSemanticBranchTreeForNamespace(namespaceInput, path);
     return getDeepValue(tree, path);
 }
-function readSemanticValueForNamespace(namespaceInput, pathInput) {
+export function readSemanticValueForNamespace(namespaceInput, pathInput) {
     return kernelRead(namespaceInput, pathInput);
 }
-function listSemanticMemoriesByRootNamespace(rootNamespaceInput, options = {}) {
-    const rootNamespace = (0, identity_1.normalizeNamespaceRootName)(rootNamespaceInput);
+export function listSemanticMemoriesByRootNamespace(rootNamespaceInput, options = {}) {
+    const rootNamespace = normalizeNamespaceRootName(rootNamespaceInput);
     if (!rootNamespace)
         return [];
     const limit = Math.max(1, Math.min(5000, options.limit ?? 500));
     const mems = allMemories();
     return mems
         .map((m, i) => memoryToRow(m, i))
-        .filter((row) => (0, identity_1.normalizeNamespaceRootName)(row.namespace) === rootNamespace)
+        .filter((row) => normalizeNamespaceRootName(row.namespace) === rootNamespace)
         .slice(0, limit);
 }
 // ─── authorized hosts (kernel-backed projection) ─────────────────────────────
@@ -253,16 +233,16 @@ function normalizeHostKey(input) {
         .replace(/^-+|-+$/g, "");
 }
 function hostKernelPrefix(namespace, hostKey) {
-    const prefix = (0, manager_1.namespaceToKernelPrefix)(namespace);
+    const prefix = namespaceToKernelPrefix(namespace);
     return prefix ? `${prefix}.host.${hostKey}` : `host.${hostKey}`;
 }
-function listHostsByNamespace(namespaceInput, usernameInput) {
+export function listHostsByNamespace(namespaceInput, usernameInput) {
     const namespace = namespaceInput.trim().toLowerCase();
     const username = usernameInput.trim().toLowerCase();
     if (!username)
         return [];
-    const targetNs = namespace || `${username}.${(0, manager_1.getRootNamespace)()}`;
-    const prefix = (0, manager_1.namespaceToKernelPrefix)(targetNs);
+    const targetNs = namespace || `${username}.${getRootNamespace()}`;
+    const prefix = namespaceToKernelPrefix(targetNs);
     const hostsPrefix = prefix ? `${prefix}.host` : "host";
     const mems = memoriesForPrefix(hostsPrefix);
     const hostMap = new Map();
@@ -275,7 +255,7 @@ function listHostsByNamespace(namespaceInput, usernameInput) {
         const field = rel.slice(dot + 1);
         if (!hostMap.has(hkey)) {
             hostMap.set(hkey, {
-                id: crypto_1.default.randomUUID(),
+                id: crypto.randomUUID(),
                 namespace: targetNs,
                 username,
                 host_key: hkey,
@@ -330,15 +310,15 @@ function listHostsByNamespace(namespaceInput, usernameInput) {
     }
     return [...hostMap.values()].sort((a, b) => b.last_used - a.last_used);
 }
-function listHostsByUsername(usernameInput) {
+export function listHostsByUsername(usernameInput) {
     return listHostsByNamespace("", usernameInput);
 }
-function getHostStatus(namespaceInput, usernameInput, fingerprintInput) {
+export function getHostStatus(namespaceInput, usernameInput, fingerprintInput) {
     const hosts = listHostsByNamespace(namespaceInput, usernameInput);
     const host = hosts.find((h) => h.fingerprint === fingerprintInput.trim());
     return host?.status ?? null;
 }
-function listHostMemoryHistory(namespaceInput, usernameInput, fingerprintInput, limitInput = 200) {
+export function listHostMemoryHistory(namespaceInput, usernameInput, fingerprintInput, limitInput = 200) {
     const namespace = namespaceInput.trim().toLowerCase();
     const username = usernameInput.trim().toLowerCase();
     const fingerprint = fingerprintInput.trim();
@@ -358,7 +338,7 @@ function listHostMemoryHistory(namespaceInput, usernameInput, fingerprintInput, 
         host_key: hostKey,
     }));
 }
-function rebuildAuthorizedHostsProjection(_usernameInput) {
+export function rebuildAuthorizedHostsProjection(_usernameInput) {
     // no-op: kernel memories are the source of truth, no separate projection needed
     return 0;
 }

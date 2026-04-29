@@ -1,23 +1,14 @@
-"use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.rebuildProjectedNamespaceClaims = rebuildProjectedNamespaceClaims;
-exports.getClaim = getClaim;
-exports.claimNamespace = claimNamespace;
-exports.openNamespace = openNamespace;
-const crypto_1 = __importDefault(require("crypto"));
-const this_me_1 = require("this.me");
-const manager_js_1 = require("../kernel/manager.js");
-const manager_js_2 = require("../kernel/manager.js");
-const derive_js_1 = require("./derive.js");
-const manager_js_3 = require("./manager.js");
-const identity_js_1 = require("../namespace/identity.js");
-const memoryStore_js_1 = require("./memoryStore.js");
+import crypto from "crypto";
+import { normalizeProofMessage, verifyEd25519Signature } from "this.me";
+import { getKernel } from "../kernel/manager.js";
+import { saveSnapshot } from "../kernel/manager.js";
+import { decryptNoise, deriveSecretCommitment, deriveUnlockKey, encryptNoise } from "./derive.js";
+import { buildPersistentClaimBundle, writePersistentClaimBundle } from "./manager.js";
+import { normalizeNamespaceIdentity, normalizeNamespaceRootName, parseNamespaceIdentityParts } from "../namespace/identity.js";
+import { appendSemanticMemory } from "./memoryStore.js";
 const CLAIM_PROOF_MAX_AGE_MS = 5 * 60 * 1000;
 function normalizeNamespace(raw) {
-    return (0, identity_js_1.normalizeNamespaceIdentity)(raw);
+    return normalizeNamespaceIdentity(raw);
 }
 // Encode namespace for use as a kernel path segment (dots → __)
 function nsKey(namespace) {
@@ -31,12 +22,12 @@ function nav(root, path) {
     return path.split(".").reduce((proxy, key) => proxy[key], root);
 }
 function kernelGet(path) {
-    const kernelRead = (0, manager_js_1.getKernel)();
+    const kernelRead = getKernel();
     const result = kernelRead(path);
     return result === undefined || result === null ? undefined : result;
 }
 function kernelSet(path, value) {
-    nav((0, manager_js_1.getKernel)(), path)(value);
+    nav(getKernel(), path)(value);
 }
 function isPlainObject(value) {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -54,13 +45,13 @@ function parseClaimProofPayload(proof) {
     }
     if (!isPlainObject(parsed))
         return null;
-    const canonical = (0, this_me_1.normalizeProofMessage)(parsed);
+    const canonical = normalizeProofMessage(parsed);
     if (canonical !== rawMessage)
         return null;
     const identityHash = String(parsed.identityHash || "").trim();
     const expression = String(parsed.expression || "").trim();
     const namespace = normalizeNamespace(String(parsed.namespace || ""));
-    const rootNamespace = (0, identity_js_1.normalizeNamespaceRootName)(String(parsed.rootNamespace || ""));
+    const rootNamespace = normalizeNamespaceRootName(String(parsed.rootNamespace || ""));
     const challenge = parsed.challenge == null ? null : String(parsed.challenge);
     const timestamp = Number(parsed.timestamp || 0);
     if (!identityHash || !expression || !namespace || !rootNamespace || !Number.isFinite(timestamp) || timestamp <= 0) {
@@ -91,7 +82,7 @@ function rawEd25519PublicKeyToPem(rawPublicKey) {
     }
     const spkiPrefix = Buffer.from("302a300506032b6570032100", "hex");
     const spkiDer = Buffer.concat([spkiPrefix, raw]);
-    const publicKey = crypto_1.default.createPublicKey({
+    const publicKey = crypto.createPublicKey({
         key: spkiDer,
         format: "der",
         type: "spki",
@@ -116,7 +107,7 @@ async function resolveClaimIdentity(input) {
     if (!enforceClaimProofWindow(proofTimestamp)) {
         return { ok: false, error: "PROOF_TIMESTAMP_INVALID" };
     }
-    const verified = await (0, this_me_1.verifyEd25519Signature)(String(proof.publicKey || ""), proof.message, String(proof.signature || ""));
+    const verified = await verifyEd25519Signature(String(proof.publicKey || ""), proof.message, String(proof.signature || ""));
     if (!verified)
         return { ok: false, error: "PROOF_INVALID" };
     try {
@@ -131,13 +122,13 @@ async function resolveClaimIdentity(input) {
     }
 }
 function materializeProjectedNamespaceClaim(namespace, _timestamp) {
-    const identity = (0, identity_js_1.parseNamespaceIdentityParts)(namespace);
-    const hostNamespace = (0, identity_js_1.normalizeNamespaceRootName)(identity.host);
+    const identity = parseNamespaceIdentityParts(namespace);
+    const hostNamespace = normalizeNamespaceRootName(identity.host);
     const username = String(identity.username || "").trim().toLowerCase();
     if (!hostNamespace || !username)
         return;
     kernelSet(`daemon.users.${nsKey(hostNamespace)}.${username}`, { __ptr: namespace });
-    (0, memoryStore_js_1.appendSemanticMemory)({
+    appendSemanticMemory({
         namespace: hostNamespace,
         path: `users.${username}`,
         operator: "__",
@@ -145,17 +136,17 @@ function materializeProjectedNamespaceClaim(namespace, _timestamp) {
         timestamp: _timestamp,
     });
 }
-function rebuildProjectedNamespaceClaims() {
+export function rebuildProjectedNamespaceClaims() {
     // Kernel state is always consistent — no rebuild needed
     return 0;
 }
-function getClaim(namespace) {
+export function getClaim(namespace) {
     const ns = normalizeNamespace(namespace);
     if (!ns)
         return undefined;
     return kernelGet(claimPath(ns));
 }
-async function claimNamespace(input) {
+export async function claimNamespace(input) {
     const namespace = normalizeNamespace(input.namespace);
     const secret = String(input.secret || "");
     const resolved = await resolveClaimIdentity(input);
@@ -171,14 +162,14 @@ async function claimNamespace(input) {
     const exists = getClaim(namespace);
     if (exists)
         return { ok: false, error: "NAMESPACE_TAKEN" };
-    const noise = crypto_1.default.randomBytes(32).toString("hex");
-    const secretCommitment = (0, derive_js_1.deriveSecretCommitment)(namespace, secret);
-    const unlockKey = (0, derive_js_1.deriveUnlockKey)(namespace, secret);
-    const encryptedNoise = (0, derive_js_1.encryptNoise)(noise, unlockKey);
+    const noise = crypto.randomBytes(32).toString("hex");
+    const secretCommitment = deriveSecretCommitment(namespace, secret);
+    const unlockKey = deriveUnlockKey(namespace, secret);
+    const encryptedNoise = encryptNoise(noise, unlockKey);
     const now = Date.now();
     let persistentClaim;
     try {
-        const bundle = (0, manager_js_3.buildPersistentClaimBundle)({
+        const bundle = buildPersistentClaimBundle({
             namespace,
             identityHash,
             publicKey,
@@ -195,9 +186,9 @@ async function claimNamespace(input) {
             updatedAt: now,
         };
         kernelSet(claimPath(namespace), record);
-        persistentClaim = (0, manager_js_3.writePersistentClaimBundle)(bundle);
+        persistentClaim = writePersistentClaimBundle(bundle);
         materializeProjectedNamespaceClaim(namespace, now);
-        (0, manager_js_2.saveSnapshot)();
+        saveSnapshot();
     }
     catch (error) {
         try {
@@ -214,7 +205,7 @@ async function claimNamespace(input) {
     const record = getClaim(namespace);
     return { ok: true, noise, persistentClaim, record };
 }
-function openNamespace(input) {
+export function openNamespace(input) {
     const namespace = normalizeNamespace(input.namespace);
     const secret = String(input.secret || "");
     const identityHash = String(input.identityHash || "").trim();
@@ -229,13 +220,13 @@ function openNamespace(input) {
         return { ok: false, error: "CLAIM_NOT_FOUND" };
     if (identityHash !== record.identityHash)
         return { ok: false, error: "IDENTITY_MISMATCH" };
-    const secretCommitment = (0, derive_js_1.deriveSecretCommitment)(namespace, secret);
+    const secretCommitment = deriveSecretCommitment(namespace, secret);
     if (!record.secretCommitment || secretCommitment !== record.secretCommitment) {
         return { ok: false, error: "CLAIM_VERIFICATION_FAILED" };
     }
     try {
-        const unlockKey = (0, derive_js_1.deriveUnlockKey)(namespace, secret);
-        const noise = (0, derive_js_1.decryptNoise)(record.encryptedNoise, unlockKey);
+        const unlockKey = deriveUnlockKey(namespace, secret);
+        const noise = decryptNoise(record.encryptedNoise, unlockKey);
         return { ok: true, record, noise };
     }
     catch {

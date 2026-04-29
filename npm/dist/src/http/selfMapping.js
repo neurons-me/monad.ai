@@ -1,30 +1,33 @@
-"use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.buildSelfSurfaceEntry = buildSelfSurfaceEntry;
-exports.parseSelectorGroups = parseSelectorGroups;
-exports.loadSelfNodeConfig = loadSelfNodeConfig;
-exports.resolveSelfDispatch = resolveSelfDispatch;
-const fs_1 = __importDefault(require("fs"));
-const path_1 = __importDefault(require("path"));
-const crypto_1 = __importDefault(require("crypto"));
-const identity_1 = require("../namespace/identity");
+import fs from "fs";
+import path from "path";
+import crypto from "crypto";
+import { normalizeNamespaceIdentity, parseNamespaceIdentityParts } from "../namespace/identity.js";
 function normalizeNamespace(input) {
-    return (0, identity_1.normalizeNamespaceIdentity)(input);
+    return normalizeNamespaceIdentity(input);
 }
-function generateSelfIdentity() {
-    return `monad-${crypto_1.default.randomBytes(4).toString("hex")}.local`;
+function generateSelfIdentity(hostname) {
+    const normalizedHostname = normalizeToken(hostname);
+    if (normalizedHostname) {
+        return normalizedHostname.includes(".")
+            ? normalizedHostname
+            : `${normalizedHostname}.local`;
+    }
+    return `monad-${crypto.randomBytes(4).toString("hex")}.local`;
 }
 function ensureSelfIdentityConfig(input) {
     const explicitIdentity = normalizeNamespace(input.env.MONAD_SELF_IDENTITY || input.fileConfig.identity);
     if (explicitIdentity)
         return input.fileConfig;
+    const normalizedHostname = normalizeToken(input.hostname);
+    const defaultEndpointHost = normalizedHostname
+        ? normalizedHostname.includes(".")
+            ? normalizedHostname
+            : `${normalizedHostname}.local`
+        : "localhost";
     const generated = {
         ...input.fileConfig,
-        identity: generateSelfIdentity(),
-        endpoint: String(input.env.MONAD_SELF_ENDPOINT || input.fileConfig.endpoint || `http://localhost:${input.port}`).trim(),
+        identity: generateSelfIdentity(input.hostname),
+        endpoint: String(input.env.MONAD_SELF_ENDPOINT || input.fileConfig.endpoint || `http://${defaultEndpointHost}:${input.port}`).trim(),
         hostname: String(input.fileConfig.hostname || input.hostname || "").trim() || String(input.hostname || ""),
         tags: Array.isArray(input.fileConfig.tags) && input.fileConfig.tags.length > 0
             ? input.fileConfig.tags
@@ -32,8 +35,8 @@ function ensureSelfIdentityConfig(input) {
         type: input.fileConfig.type || "desktop",
         trust: input.fileConfig.trust || "owner",
     };
-    fs_1.default.mkdirSync(path_1.default.dirname(input.configPath), { recursive: true });
-    fs_1.default.writeFileSync(input.configPath, `${JSON.stringify(generated, null, 2)}\n`, "utf8");
+    fs.mkdirSync(path.dirname(input.configPath), { recursive: true });
+    fs.writeFileSync(input.configPath, `${JSON.stringify(generated, null, 2)}\n`, "utf8");
     input.env.MONAD_SELF_IDENTITY = String(generated.identity || "");
     input.env.MONAD_SELF_ENDPOINT = String(generated.endpoint || "");
     return generated;
@@ -186,13 +189,13 @@ function inferResources(type, host, endpointHost, configured) {
     return Array.from(resources);
 }
 function resolveSurfaceRootName(identity, fallbackHost) {
-    const parsed = (0, identity_1.parseNamespaceIdentityParts)(identity);
+    const parsed = parseNamespaceIdentityParts(identity);
     const host = normalizeToken(parsed.host);
     if (host && host !== "unknown")
         return host;
     return normalizeToken(fallbackHost);
 }
-function buildSelfSurfaceEntry(input) {
+export function buildSelfSurfaceEntry(input) {
     const now = typeof input.now === "number" ? input.now : Date.now();
     const originParts = extractEndpointParts(input.origin);
     const endpointParts = extractEndpointParts(input.self?.endpoint || input.origin);
@@ -232,7 +235,7 @@ function buildSelfSurfaceEntry(input) {
         rootName,
     };
 }
-function parseSelectorGroups(selectorRaw) {
+export function parseSelectorGroups(selectorRaw) {
     const raw = String(selectorRaw || "").trim();
     if (!raw)
         return [];
@@ -269,12 +272,12 @@ function matchClause(clause, tagSet, hostSet) {
     }
     return [];
 }
-function loadSelfNodeConfig(input) {
-    const configPath = path_1.default.resolve(input.cwd, String(input.env.MONAD_SELF_CONFIG_PATH || "env/self.json"));
+export function loadSelfNodeConfig(input) {
+    const configPath = path.resolve(input.cwd, String(input.env.MONAD_SELF_CONFIG_PATH || "env/self.json"));
     let fileConfig = {};
-    if (fs_1.default.existsSync(configPath)) {
+    if (fs.existsSync(configPath)) {
         try {
-            const raw = fs_1.default.readFileSync(configPath, "utf8");
+            const raw = fs.readFileSync(configPath, "utf8");
             const parsed = JSON.parse(raw);
             if (parsed && typeof parsed === "object") {
                 fileConfig = parsed;
@@ -294,7 +297,13 @@ function loadSelfNodeConfig(input) {
     const identity = normalizeNamespace(input.env.MONAD_SELF_IDENTITY || fileConfig.identity);
     if (!identity)
         return null;
-    const endpoint = String(input.env.MONAD_SELF_ENDPOINT || fileConfig.endpoint || `http://localhost:${input.port}`).trim();
+    const normalizedHostname = normalizeToken(input.hostname);
+    const defaultEndpointHost = normalizedHostname
+        ? normalizedHostname.includes(".")
+            ? normalizedHostname
+            : `${normalizedHostname}.local`
+        : "localhost";
+    const endpoint = String(input.env.MONAD_SELF_ENDPOINT || fileConfig.endpoint || `http://${defaultEndpointHost}:${input.port}`).trim();
     const hostname = String(fileConfig.hostname || input.hostname || "").trim() || String(input.hostname || "");
     const tags = uniq([
         ...toArray(fileConfig.tags),
@@ -313,6 +322,8 @@ function loadSelfNodeConfig(input) {
     const capacity = normalizeSurfaceCapacity(fileConfig.capacity);
     input.env.MONAD_SELF_IDENTITY = identity;
     input.env.MONAD_SELF_ENDPOINT = endpoint;
+    input.env.MONAD_SELF_HOSTNAME = hostname;
+    input.env.MONAD_SELF_TAGS = tags.join(",");
     return {
         identity,
         tags,
@@ -325,7 +336,7 @@ function loadSelfNodeConfig(input) {
         capacity,
     };
 }
-function resolveSelfDispatch(baseInput, selectorRawInput, self) {
+export function resolveSelfDispatch(baseInput, selectorRawInput, self) {
     const base = normalizeNamespace(baseInput);
     const selectorRaw = String(selectorRawInput || "").trim() || null;
     if (!self) {

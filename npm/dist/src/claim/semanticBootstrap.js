@@ -1,9 +1,6 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.ensureRootSemanticBootstrap = ensureRootSemanticBootstrap;
-const identity_1 = require("../namespace/identity");
-const memoryStore_1 = require("./memoryStore");
-const semanticCatalog_1 = require("./semanticCatalog");
+import { normalizeNamespaceRootName } from "../namespace/identity.js";
+import { appendSemanticMemory, readSemanticValueForNamespace } from "./memoryStore.js";
+import { ROOT_SCHEMA_SEEDS } from "./semanticCatalog.js";
 function stableStringify(value) {
     if (value === null || typeof value !== "object")
         return JSON.stringify(value);
@@ -14,20 +11,20 @@ function stableStringify(value) {
     return `{${keys.map((key) => `${JSON.stringify(key)}:${stableStringify(obj[key])}`).join(",")}}`;
 }
 function ensureSemanticMemory(namespace, path, data, operator = "=", timestamp) {
-    const latest = (0, memoryStore_1.readSemanticValueForNamespace)(namespace, path);
+    const latest = readSemanticValueForNamespace(namespace, path);
     if (typeof latest !== "undefined" && stableStringify(latest) === stableStringify(data)) {
         return false;
     }
-    (0, memoryStore_1.appendSemanticMemory)({ namespace, path, operator, data, timestamp });
+    appendSemanticMemory({ namespace, path, operator, data, timestamp });
     return true;
 }
-function ensureRootSemanticBootstrap(rootNamespaceInput) {
-    const rootNamespace = (0, identity_1.normalizeNamespaceRootName)(rootNamespaceInput);
+export function ensureRootSemanticBootstrap(rootNamespaceInput) {
+    const rootNamespace = normalizeNamespaceRootName(rootNamespaceInput);
     if (!rootNamespace)
         return 0;
     const timestamp = Date.now();
     let inserted = 0;
-    for (const seed of semanticCatalog_1.ROOT_SCHEMA_SEEDS) {
+    for (const seed of ROOT_SCHEMA_SEEDS) {
         if (ensureSemanticMemory(rootNamespace, seed.path, seed.data, seed.operator || "=", timestamp)) {
             inserted += 1;
         }

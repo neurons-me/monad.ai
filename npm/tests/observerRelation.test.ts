@@ -125,6 +125,40 @@ describe("observer relation routing", () => {
     expect(target.nrp).toBe("me://ana.monad-7f3a.local:read/profile.name");
   });
 
+  it("maps local host aliases onto the configured self identity namespace", () => {
+    const previousIdentity = process.env.MONAD_SELF_IDENTITY;
+    const previousHostname = process.env.MONAD_SELF_HOSTNAME;
+    const previousEndpoint = process.env.MONAD_SELF_ENDPOINT;
+    const previousTags = process.env.MONAD_SELF_TAGS;
+
+    process.env.MONAD_SELF_IDENTITY = "monad-9f094393.local";
+    process.env.MONAD_SELF_HOSTNAME = "suis-macbook-air.local";
+    process.env.MONAD_SELF_ENDPOINT = "http://localhost:8161";
+    process.env.MONAD_SELF_TAGS = "local,primary,suis-macbook-air.local,localhost";
+
+    try {
+      const req = makeRequest({
+        host: "suis-macbook-air.local:8161",
+        path: "/profile/name",
+      });
+
+      expect(resolveNamespace(req)).toBe("monad-9f094393.local");
+
+      const target = normalizeHttpRequestToMeTarget(req);
+      expect(target.namespace).toBe("monad-9f094393.local");
+      expect(target.nrp).toBe("me://monad-9f094393.local:read/profile.name");
+    } finally {
+      if (previousIdentity === undefined) delete process.env.MONAD_SELF_IDENTITY;
+      else process.env.MONAD_SELF_IDENTITY = previousIdentity;
+      if (previousHostname === undefined) delete process.env.MONAD_SELF_HOSTNAME;
+      else process.env.MONAD_SELF_HOSTNAME = previousHostname;
+      if (previousEndpoint === undefined) delete process.env.MONAD_SELF_ENDPOINT;
+      else process.env.MONAD_SELF_ENDPOINT = previousEndpoint;
+      if (previousTags === undefined) delete process.env.MONAD_SELF_TAGS;
+      else process.env.MONAD_SELF_TAGS = previousTags;
+    }
+  });
+
   it("preserves legacy named views as a non-identity relation", () => {
     const req = makeRequest({
       host: "ana.cleaker.me",

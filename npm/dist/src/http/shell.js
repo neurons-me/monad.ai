@@ -1,30 +1,22 @@
-"use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.MONAD_INDEX_PATH = exports.GUI_PKG_DIST_DIR = void 0;
-exports.wantsHtml = wantsHtml;
-exports.htmlShell = htmlShell;
-const path_1 = __importDefault(require("path"));
-const fs_1 = __importDefault(require("fs"));
-const provider_1 = require("./provider");
-exports.GUI_PKG_DIST_DIR = process.env.GUI_PKG_DIST_DIR
-    ? path_1.default.resolve(process.env.GUI_PKG_DIST_DIR)
-    : path_1.default.resolve(process.cwd(), "../../../this/GUI/npm/dist");
-exports.MONAD_INDEX_PATH = process.env.MONAD_INDEX_PATH
-    ? path_1.default.resolve(process.env.MONAD_INDEX_PATH)
-    : path_1.default.resolve(process.cwd(), "../index.html");
-function wantsHtml(req) {
+import path from "path";
+import fs from "fs";
+import { injectNamespaceProviderShell, } from "./provider.js";
+export const GUI_PKG_DIST_DIR = process.env.GUI_PKG_DIST_DIR
+    ? path.resolve(process.env.GUI_PKG_DIST_DIR)
+    : path.resolve(process.cwd(), "../../../this/GUI/npm/dist");
+export const MONAD_INDEX_PATH = process.env.MONAD_INDEX_PATH
+    ? path.resolve(process.env.MONAD_INDEX_PATH)
+    : path.resolve(process.cwd(), "../index.html");
+export function wantsHtml(req) {
     const accept = String(req.headers.accept || "");
     return accept.includes("text/html");
 }
-function htmlShell(options = {}) {
+export function htmlShell(options = {}) {
     const providerBoot = options.providerBoot || null;
     try {
-        if (fs_1.default.existsSync(exports.MONAD_INDEX_PATH)) {
-            const html = fs_1.default.readFileSync(exports.MONAD_INDEX_PATH, "utf8");
-            return providerBoot ? (0, provider_1.injectNamespaceProviderShell)(html, providerBoot) : html;
+        if (fs.existsSync(MONAD_INDEX_PATH)) {
+            const html = fs.readFileSync(MONAD_INDEX_PATH, "utf8");
+            return providerBoot ? injectNamespaceProviderShell(html, providerBoot) : html;
         }
     }
     catch {
@@ -88,5 +80,5 @@ function htmlShell(options = {}) {
     </script>
   </body>
 </html>`;
-    return providerBoot ? (0, provider_1.injectNamespaceProviderShell)(fallbackHtml, providerBoot) : fallbackHtml;
+    return providerBoot ? injectNamespaceProviderShell(fallbackHtml, providerBoot) : fallbackHtml;
 }

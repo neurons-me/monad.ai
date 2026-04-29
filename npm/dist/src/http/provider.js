@@ -1,13 +1,7 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.normalizeSurfaceRoute = normalizeSurfaceRoute;
-exports.buildNamespaceProviderBoot = buildNamespaceProviderBoot;
-exports.injectNamespaceProviderShell = injectNamespaceProviderShell;
-exports.resolveNamespaceSurfaceSpec = resolveNamespaceSurfaceSpec;
-const memoryStore_1 = require("../claim/memoryStore");
+import { readSemanticValueForNamespace } from "../claim/memoryStore.js";
 function readFirstSemanticValue(namespace, candidates) {
     for (const candidate of candidates) {
-        const value = (0, memoryStore_1.readSemanticValueForNamespace)(namespace, candidate);
+        const value = readSemanticValueForNamespace(namespace, candidate);
         if (typeof value !== "undefined")
             return value;
     }
@@ -37,7 +31,7 @@ function routeToSemanticKey(route) {
         .filter(Boolean);
     return segments.join(".") || "root";
 }
-function normalizeSurfaceRoute(route) {
+export function normalizeSurfaceRoute(route) {
     const raw = String(route || "").trim();
     if (!raw)
         return "/";
@@ -48,7 +42,7 @@ function normalizeSurfaceRoute(route) {
         return "/";
     return collapsed.replace(/\/+$/, "") || "/";
 }
-function buildNamespaceProviderBoot(input) {
+export function buildNamespaceProviderBoot(input) {
     const route = normalizeSurfaceRoute(input.route);
     const origin = String(input.origin || "").trim();
     return {
@@ -92,7 +86,7 @@ function buildProviderInjectionScript(boot) {
 })();
 </script>`;
 }
-function injectNamespaceProviderShell(html, boot) {
+export function injectNamespaceProviderShell(html, boot) {
     const source = String(html || "");
     if (!source.trim())
         return source;
@@ -207,7 +201,7 @@ function buildFallbackSurfaceSpec(input) {
         ],
     };
 }
-function resolveNamespaceSurfaceSpec(input) {
+export function resolveNamespaceSurfaceSpec(input) {
     const namespace = String(input.namespace || "").trim();
     const route = normalizeSurfaceRoute(input.route);
     const semanticKey = routeToSemanticKey(route);

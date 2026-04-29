@@ -1,11 +1,7 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.resolveNamespacePathValue = resolveNamespacePathValue;
-exports.createPathResolverHandler = createPathResolverHandler;
-const memoryStore_1 = require("../claim/memoryStore");
-const namespace_1 = require("./namespace");
-const meTarget_1 = require("./meTarget");
-const envelope_1 = require("./envelope");
+import { readSemanticBranchForNamespace } from "../claim/memoryStore.js";
+import { resolveNamespace } from "./namespace.js";
+import { normalizeHttpRequestToMeTarget } from "./meTarget.js";
+import { createEnvelope, createErrorEnvelope } from "./envelope.js";
 function normalizeDotPath(input) {
     return String(input || "")
         .trim()
@@ -16,7 +12,7 @@ function normalizeDotPath(input) {
         .filter(Boolean)
         .join(".");
 }
-async function resolveNamespacePathValue(namespaceInput, dotPathInput) {
+export async function resolveNamespacePathValue(namespaceInput, dotPathInput) {
     const namespace = String(namespaceInput || "").trim();
     const dotPath = normalizeDotPath(dotPathInput);
     if (!dotPath) {
@@ -26,7 +22,7 @@ async function resolveNamespacePathValue(namespaceInput, dotPathInput) {
             found: false,
         };
     }
-    const semanticResolved = (0, memoryStore_1.readSemanticBranchForNamespace)(namespace, dotPath);
+    const semanticResolved = readSemanticBranchForNamespace(namespace, dotPath);
     if (typeof semanticResolved !== "undefined") {
         return {
             namespace,
@@ -41,15 +37,15 @@ async function resolveNamespacePathValue(namespaceInput, dotPathInput) {
         found: false,
     };
 }
-function createPathResolverHandler() {
+export function createPathResolverHandler() {
     return async (req, res) => {
         const rawPath = String(req.path || "");
         const trimmed = rawPath.replace(/^\/+/, "").replace(/\/+$/, "");
-        const target = (0, meTarget_1.normalizeHttpRequestToMeTarget)(req);
+        const target = normalizeHttpRequestToMeTarget(req);
         if (!trimmed) {
-            return res.status(404).json((0, envelope_1.createErrorEnvelope)(target, { error: "NOT_FOUND" }));
+            return res.status(404).json(createErrorEnvelope(target, { error: "NOT_FOUND" }));
         }
-        const namespace = (0, namespace_1.resolveNamespace)(req);
+        const namespace = resolveNamespace(req);
         const segments0 = trimmed.split("/").filter(Boolean);
         let segments = segments0;
         if (segments.length > 0 && segments[0].startsWith("@")) {
@@ -60,17 +56,17 @@ function createPathResolverHandler() {
         }
         const dotPath = normalizeDotPath(segments.join("/"));
         if (!dotPath) {
-            return res.status(404).json((0, envelope_1.createErrorEnvelope)(target, { error: "NOT_FOUND" }));
+            return res.status(404).json(createErrorEnvelope(target, { error: "NOT_FOUND" }));
         }
         const resolved = await resolveNamespacePathValue(namespace, dotPath);
         if (!resolved.found) {
-            return res.status(404).json((0, envelope_1.createErrorEnvelope)(target, {
+            return res.status(404).json(createErrorEnvelope(target, {
                 namespace,
                 path: dotPath,
                 error: "PATH_NOT_FOUND",
             }));
         }
-        return res.json((0, envelope_1.createEnvelope)(target, {
+        return res.json(createEnvelope(target, {
             namespace: resolved.namespace,
             path: resolved.path,
             value: resolved.value,

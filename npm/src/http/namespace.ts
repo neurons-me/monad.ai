@@ -6,6 +6,7 @@ import {
   normalizeNamespaceIdentity,
   parseNamespaceIdentityParts,
 } from "../namespace/identity.js";
+import { resolveHostToCanonicalNamespace } from "../runtime/hostResolver.js";
 
 export type ObserverRelationMode = "raw" | "self" | "observer" | "view";
 
@@ -32,6 +33,39 @@ function firstHeaderValue(raw: string | string[] | undefined): string {
   return String(value || "").split(",")[0].trim();
 }
 
+function normalizeHostToken(raw: string): string {
+  return String(raw || "")
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//i, "")
+    .split("/")[0]
+    .split(":")[0]
+    .trim();
+}
+
+function readLocalIdentityNamespace(hostnameOnly: string): string | null {
+  const host = normalizeHostToken(hostnameOnly);
+  if (!host) return null;
+
+  const identity = normalizeNamespaceIdentity(
+    process.env.MONAD_SELF_IDENTITY ||
+    process.env.ME_NAMESPACE ||
+    "",
+  );
+  if (!identity) return null;
+
+  const aliases = new Set<string>([
+    normalizeHostToken(process.env.MONAD_SELF_HOSTNAME || ""),
+    normalizeHostToken(process.env.MONAD_SELF_ENDPOINT || ""),
+    ...String(process.env.MONAD_SELF_TAGS || "")
+      .split(",")
+      .map((value) => normalizeHostToken(value))
+      .filter((value) => value.includes(".") || value === "localhost"),
+  ].filter(Boolean));
+
+  return aliases.has(host) ? identity : null;
+}
+
 function readForwardedHost(req: express.Request): string {
   const forwarded = firstHeaderValue(req.headers.forwarded as string | string[] | undefined);
   if (forwarded) {
@@ -48,6 +82,10 @@ export function resolveHostNamespace(req: express.Request) {
   const first = String(hostHeaderRaw).split(",")[0].trim();
   const noProto = first.replace(/^https?:\/\//i, "");
   const hostnameOnly = noProto.split(":")[0].trim();
+  const canonical = resolveHostToCanonicalNamespace(hostnameOnly);
+  if (canonical) return canonical;
+  const localIdentity = readLocalIdentityNamespace(hostnameOnly);
+  if (localIdentity) return localIdentity;
   return normalizeNamespaceIdentity(hostnameOnly) || "unknown";
 }
 

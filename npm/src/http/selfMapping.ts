@@ -492,6 +492,8 @@ export function loadSelfNodeConfig(input: {
   const capacity = normalizeSurfaceCapacity(fileConfig.capacity);
   input.env.MONAD_SELF_IDENTITY = identity;
   input.env.MONAD_SELF_ENDPOINT = endpoint;
+  input.env.MONAD_SELF_HOSTNAME = hostname;
+  input.env.MONAD_SELF_TAGS = tags.join(",");
 
   return {
     identity,

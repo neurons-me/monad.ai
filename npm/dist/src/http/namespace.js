@@ -1,24 +1,6 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.createRawObserverRelation = createRawObserverRelation;
-exports.resolveHostNamespace = resolveHostNamespace;
-exports.resolveTransportHost = resolveTransportHost;
-exports.isReservedLabel = isReservedLabel;
-exports.isProjectableRootHost = isProjectableRootHost;
-exports.normalizeUsernameLabel = normalizeUsernameLabel;
-exports.canonicalPair = canonicalPair;
-exports.getAtSelectorFromPath = getAtSelectorFromPath;
-exports.getAtNestedUserFromPath = getAtNestedUserFromPath;
-exports.resolveChainNamespace = resolveChainNamespace;
-exports.resolveNamespace = resolveNamespace;
-exports.resolveNamespaceProjectionRoot = resolveNamespaceProjectionRoot;
-exports.resolveObserverRelation = resolveObserverRelation;
-exports.formatObserverRelationLabel = formatObserverRelationLabel;
-exports.formatObserverRelationQuery = formatObserverRelationQuery;
-exports.resolveLens = resolveLens;
-exports.filterBlocksByNamespace = filterBlocksByNamespace;
-const identity_1 = require("../namespace/identity");
-function createRawObserverRelation() {
+import { composeProjectedNamespace, isProjectableNamespaceRoot, normalizeNamespaceConstant, normalizeNamespaceIdentity, parseNamespaceIdentityParts, } from "../namespace/identity.js";
+import { resolveHostToCanonicalNamespace } from "../runtime/hostResolver.js";
+export function createRawObserverRelation() {
     return {
         operator: "?",
         mode: "raw",
@@ -27,33 +9,75 @@ function createRawObserverRelation() {
         namespace: null,
     };
 }
-function resolveHostNamespace(req) {
-    const xfHost = req.headers["x-forwarded-host"];
-    const hostHeaderRaw = (Array.isArray(xfHost) ? xfHost[0] : xfHost) ||
-        req.headers.host ||
-        "";
+function firstHeaderValue(raw) {
+    const value = Array.isArray(raw) ? raw[0] : raw;
+    return String(value || "").split(",")[0].trim();
+}
+function normalizeHostToken(raw) {
+    return String(raw || "")
+        .trim()
+        .toLowerCase()
+        .replace(/^https?:\/\//i, "")
+        .split("/")[0]
+        .split(":")[0]
+        .trim();
+}
+function readLocalIdentityNamespace(hostnameOnly) {
+    const host = normalizeHostToken(hostnameOnly);
+    if (!host)
+        return null;
+    const identity = normalizeNamespaceIdentity(process.env.MONAD_SELF_IDENTITY ||
+        process.env.ME_NAMESPACE ||
+        "");
+    if (!identity)
+        return null;
+    const aliases = new Set([
+        normalizeHostToken(process.env.MONAD_SELF_HOSTNAME || ""),
+        normalizeHostToken(process.env.MONAD_SELF_ENDPOINT || ""),
+        ...String(process.env.MONAD_SELF_TAGS || "")
+            .split(",")
+            .map((value) => normalizeHostToken(value))
+            .filter((value) => value.includes(".") || value === "localhost"),
+    ].filter(Boolean));
+    return aliases.has(host) ? identity : null;
+}
+function readForwardedHost(req) {
+    const forwarded = firstHeaderValue(req.headers.forwarded);
+    if (forwarded) {
+        const match = forwarded.match(/(?:^|;|\s)host="?([^;,\s"]+)"?/i);
+        if (match?.[1])
+            return match[1].trim();
+    }
+    return firstHeaderValue(req.headers["x-forwarded-host"]);
+}
+export function resolveHostNamespace(req) {
+    const hostHeaderRaw = readForwardedHost(req) || firstHeaderValue(req.headers.host) || "";
     const first = String(hostHeaderRaw).split(",")[0].trim();
     const noProto = first.replace(/^https?:\/\//i, "");
     const hostnameOnly = noProto.split(":")[0].trim();
-    return (0, identity_1.normalizeNamespaceIdentity)(hostnameOnly) || "unknown";
+    const canonical = resolveHostToCanonicalNamespace(hostnameOnly);
+    if (canonical)
+        return canonical;
+    const localIdentity = readLocalIdentityNamespace(hostnameOnly);
+    if (localIdentity)
+        return localIdentity;
+    return normalizeNamespaceIdentity(hostnameOnly) || "unknown";
 }
-function resolveTransportHost(req) {
-    const hostHeaderRaw = Array.isArray(req.headers.host)
-        ? req.headers.host[0]
-        : req.headers.host || "";
+export function resolveTransportHost(req) {
+    const hostHeaderRaw = firstHeaderValue(req.headers.host);
     const first = String(hostHeaderRaw).split(",")[0].trim();
     const noProto = first.replace(/^https?:\/\//i, "");
     const hostnameOnly = noProto.split(":")[0].trim();
     return hostnameOnly || "unknown";
 }
-function isReservedLabel(label) {
+export function isReservedLabel(label) {
     const x = String(label || "").toLowerCase();
     return x === "www" || x === "api";
 }
-function isProjectableRootHost(hostname) {
-    return (0, identity_1.isProjectableNamespaceRoot)(hostname);
+export function isProjectableRootHost(hostname) {
+    return isProjectableNamespaceRoot(hostname);
 }
-function normalizeUsernameLabel(raw) {
+export function normalizeUsernameLabel(raw) {
     const x = String(raw || "").trim().toLowerCase();
     const safe = x.replace(/[^a-z0-9_-]/g, "");
     if (!safe)
@@ -62,7 +86,7 @@ function normalizeUsernameLabel(raw) {
         return "";
     return safe;
 }
-function canonicalPair(a, b) {
+export function canonicalPair(a, b) {
     const A = normalizeUsernameLabel(a);
     const B = normalizeUsernameLabel(b);
     if (!A || !B)
@@ -70,7 +94,7 @@ function canonicalPair(a, b) {
     const pair = [A, B].sort();
     return `${pair[0]}+${pair[1]}`;
 }
-function getAtSelectorFromPath(req) {
+export function getAtSelectorFromPath(req) {
     const p = String(req.path || "");
     const m = p.match(/^\/\@([^\/\?#]+)(?:\/|$)/);
     if (!m)
@@ -92,7 +116,7 @@ function getAtSelectorFromPath(req) {
         return null;
     return { kind: "user", username };
 }
-function getAtNestedUserFromPath(req) {
+export function getAtNestedUserFromPath(req) {
     const p = String(req.path || "");
     const m = p.match(/^\/\@([^\/\?#]+)\/\@([^\/\?#]+)(?:\/|$)/);
     if (!m)
@@ -103,29 +127,29 @@ function getAtNestedUserFromPath(req) {
         return null;
     return { a, b };
 }
-function resolveChainNamespace(req) {
-    const host = (0, identity_1.normalizeNamespaceIdentity)(resolveHostNamespace(req));
+export function resolveChainNamespace(req) {
+    const host = normalizeNamespaceIdentity(resolveHostNamespace(req));
     if (!host)
         return "unknown";
     const atSel = getAtSelectorFromPath(req);
     const atNested = getAtNestedUserFromPath(req);
     const rootProjectable = isProjectableRootHost(host);
     if (atNested) {
-        return rootProjectable ? (0, identity_1.composeProjectedNamespace)(atNested.a, host) : host;
+        return rootProjectable ? composeProjectedNamespace(atNested.a, host) : host;
     }
     if (atSel?.kind === "relation") {
         return host;
     }
     if (atSel?.kind === "user") {
-        return rootProjectable ? (0, identity_1.composeProjectedNamespace)(atSel.username, host) : host;
+        return rootProjectable ? composeProjectedNamespace(atSel.username, host) : host;
     }
     return host;
 }
-function resolveNamespace(req) {
+export function resolveNamespace(req) {
     return resolveChainNamespace(req);
 }
-function resolveNamespaceProjectionRoot(namespace) {
-    return (0, identity_1.normalizeNamespaceConstant)(namespace);
+export function resolveNamespaceProjectionRoot(namespace) {
+    return normalizeNamespaceConstant(namespace);
 }
 function normalizeNamespaceReference(raw) {
     return String(raw || "")
@@ -144,8 +168,8 @@ function resolveObserverReference(raw) {
         normalized.includes(":") ||
         normalized.startsWith("me://") ||
         normalized.startsWith("nrp://")) {
-        const namespace = (0, identity_1.normalizeNamespaceIdentity)(normalized);
-        const identity = (0, identity_1.parseNamespaceIdentityParts)(namespace);
+        const namespace = normalizeNamespaceIdentity(normalized);
+        const identity = parseNamespaceIdentityParts(namespace);
         return {
             observer: identity.username || namespace,
             namespace,
@@ -159,7 +183,7 @@ function resolveObserverReference(raw) {
         namespace: null,
     };
 }
-function resolveObserverRelation(req) {
+export function resolveObserverRelation(req) {
     const q = req.query || {};
     const asRaw = String(q.as ?? "").trim();
     if (asRaw) {
@@ -171,7 +195,7 @@ function resolveObserverRelation(req) {
         const observerNamespace = resolved.namespace
             ? resolved.namespace
             : isProjectableRootHost(projectionRoot)
-                ? (0, identity_1.composeProjectedNamespace)(resolved.observer, projectionRoot)
+                ? composeProjectedNamespace(resolved.observer, projectionRoot)
                 : resolved.observer;
         return {
             operator: "?",
@@ -204,7 +228,7 @@ function resolveObserverRelation(req) {
     }
     return createRawObserverRelation();
 }
-function formatObserverRelationLabel(relation) {
+export function formatObserverRelationLabel(relation) {
     if (relation.mode === "observer") {
         return relation.namespace
             ? `as:${relation.namespace}`
@@ -218,7 +242,7 @@ function formatObserverRelationLabel(relation) {
         return relation.value || "view";
     return "raw";
 }
-function formatObserverRelationQuery(relation) {
+export function formatObserverRelationQuery(relation) {
     if (relation.mode === "observer") {
         const value = relation.namespace || relation.observer || relation.value;
         return value ? `?as=${encodeURIComponent(value)}` : "";
@@ -231,10 +255,10 @@ function formatObserverRelationQuery(relation) {
     }
     return "";
 }
-function resolveLens(req) {
+export function resolveLens(req) {
     return formatObserverRelationLabel(resolveObserverRelation(req));
 }
-function filterBlocksByNamespace(allBlocks, ns) {
+export function filterBlocksByNamespace(allBlocks, ns) {
     if (!ns)
         return allBlocks;
     const slashPrefix = ns.endsWith("/") ? ns : `${ns}/`;

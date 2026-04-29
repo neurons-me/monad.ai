@@ -1,8 +1,3 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.POLLS_STUDIO_DEFAULT_CATEGORIES = exports.ROOT_SCHEMA_SEEDS = void 0;
-exports.buildPollsStudioCategorySeeds = buildPollsStudioCategorySeeds;
-exports.buildClaimSemanticSeeds = buildClaimSemanticSeeds;
 function createRoleSeeds(role, config) {
     const seeds = [
         { path: `schema.role.${role}.status`, data: "adopted" },
@@ -251,12 +246,12 @@ const ROOT_GUI_DEFAULT_SEEDS = [
     { path: "gui.footer.action.theme.icon", data: "palette" },
     { path: "gui.footer.action.theme.order", data: 90 },
 ];
-exports.ROOT_SCHEMA_SEEDS = [
+export const ROOT_SCHEMA_SEEDS = [
     ...ROOT_ROLE_SEEDS,
     ...ROOT_FIELD_SEEDS,
     ...ROOT_GUI_DEFAULT_SEEDS,
 ];
-exports.POLLS_STUDIO_DEFAULT_CATEGORIES = [
+export const POLLS_STUDIO_DEFAULT_CATEGORIES = [
     {
         slug: "community",
         label: "Community",
@@ -314,8 +309,8 @@ exports.POLLS_STUDIO_DEFAULT_CATEGORIES = [
         order: 80,
     },
 ];
-function buildPollsStudioCategorySeeds(basePath = "polls.studio.categories") {
-    return exports.POLLS_STUDIO_DEFAULT_CATEGORIES.flatMap((category) => {
+export function buildPollsStudioCategorySeeds(basePath = "polls.studio.categories") {
+    return POLLS_STUDIO_DEFAULT_CATEGORIES.flatMap((category) => {
         const categoryBase = `${basePath}.${category.slug}`;
         return [
             { path: `${categoryBase}.slug`, data: category.slug },
@@ -326,7 +321,7 @@ function buildPollsStudioCategorySeeds(basePath = "polls.studio.categories") {
         ];
     });
 }
-function buildClaimSemanticSeeds(input) {
+export function buildClaimSemanticSeeds(input) {
     const namespace = String(input.namespace || "").trim().toLowerCase();
     const username = String(input.username || "").trim().toLowerCase();
     const passwordHash = String(input.passwordHash || "").trim();

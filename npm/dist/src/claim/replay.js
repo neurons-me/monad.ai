@@ -1,15 +1,7 @@
-"use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.recordMemory = recordMemory;
-exports.getMemoriesForNamespace = getMemoriesForNamespace;
-exports.isNamespaceWriteAuthorized = isNamespaceWriteAuthorized;
-const crypto_1 = __importDefault(require("crypto"));
-const memoryStore_js_1 = require("./memoryStore.js");
-const manager_js_1 = require("../kernel/manager.js");
-const identity_js_1 = require("../namespace/identity.js");
+import crypto from "crypto";
+import { appendSemanticMemory, listSemanticMemoriesByNamespace } from "./memoryStore.js";
+import { getKernel } from "../kernel/manager.js";
+import { normalizeNamespaceIdentity } from "../namespace/identity.js";
 function nsKey(namespace) {
     return namespace.replace(/\./g, "__");
 }
@@ -20,11 +12,11 @@ function nav(root, path) {
     return path.split(".").reduce((proxy, key) => proxy[key], root);
 }
 function kernelGet(path) {
-    const kernelRead = (0, manager_js_1.getKernel)();
+    const kernelRead = getKernel();
     return kernelRead(path);
 }
 function kernelSet(path, value) {
-    nav((0, manager_js_1.getKernel)(), path)(value);
+    nav(getKernel(), path)(value);
 }
 function isPlainObject(value) {
     return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -60,13 +52,13 @@ function stripWriteAuthFields(body) {
 }
 function verifySignature(publicKey, message, signature) {
     try {
-        const key = crypto_1.default.createPublicKey(publicKey);
+        const key = crypto.createPublicKey(publicKey);
         const keyType = key.asymmetricKeyType || "";
         const payload = Buffer.from(message);
         if (keyType === "ed25519" || keyType === "ed448") {
-            return crypto_1.default.verify(null, payload, key, signature);
+            return crypto.verify(null, payload, key, signature);
         }
-        const verifier = crypto_1.default.createVerify("SHA256");
+        const verifier = crypto.createVerify("SHA256");
         verifier.update(payload);
         verifier.end();
         return verifier.verify(key, signature);
@@ -82,7 +74,7 @@ function normalizeOperator(raw) {
     return normalized || null;
 }
 function toReplayHash(input) {
-    return crypto_1.default
+    return crypto
         .createHash("sha256")
         .update(toStableJson({
         path: input.path,
@@ -186,14 +178,14 @@ function getLegacyMemoriesForNamespace(namespace) {
         .filter((entry) => Boolean(entry))
         .sort((a, b) => a.timestamp - b.timestamp);
 }
-function recordMemory(input) {
-    const namespace = (0, identity_js_1.normalizeNamespaceIdentity)(input.namespace);
+export function recordMemory(input) {
+    const namespace = normalizeNamespaceIdentity(input.namespace);
     if (!namespace)
         return null;
     const replay = normalizeLegacyReplayMemory(input.payload);
     if (!replay)
         return null;
-    return (0, memoryStore_js_1.appendSemanticMemory)({
+    return appendSemanticMemory({
         namespace,
         path: replay.path,
         operator: replay.operator,
@@ -201,11 +193,11 @@ function recordMemory(input) {
         timestamp: Number(input.timestamp || replay.timestamp || Date.now()),
     });
 }
-function getMemoriesForNamespace(namespace) {
-    const ns = (0, identity_js_1.normalizeNamespaceIdentity)(namespace);
+export function getMemoriesForNamespace(namespace) {
+    const ns = normalizeNamespaceIdentity(namespace);
     if (!ns)
         return [];
-    const semanticMemories = (0, memoryStore_js_1.listSemanticMemoriesByNamespace)(ns, { limit: 10000 })
+    const semanticMemories = listSemanticMemoriesByNamespace(ns, { limit: 10000 })
         .map((row) => semanticRowToReplayMemory(row));
     const legacyMemories = getLegacyMemoriesForNamespace(ns);
     if (!semanticMemories.length) {
@@ -223,7 +215,7 @@ function getMemoriesForNamespace(namespace) {
     }
     return [...merged.values()].sort((a, b) => a.timestamp - b.timestamp);
 }
-function isNamespaceWriteAuthorized(input) {
+export function isNamespaceWriteAuthorized(input) {
     const claimIdentityHash = String(input.claimIdentityHash || "").trim();
     if (!claimIdentityHash)
         return false;

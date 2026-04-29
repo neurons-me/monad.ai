@@ -1,19 +1,12 @@
-"use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
-};
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.readOpenedClaimProfile = readOpenedClaimProfile;
-exports.createClaimsRouter = createClaimsRouter;
-const express_1 = __importDefault(require("express"));
-const crypto_1 = __importDefault(require("crypto"));
-const records_1 = require("../claim/records");
-const replay_1 = require("../claim/replay");
-const memoryStore_1 = require("../claim/memoryStore");
-const claimSemantics_1 = require("../claim/claimSemantics");
-const meTarget_1 = require("./meTarget");
-const envelope_1 = require("./envelope");
-const identity_1 = require("../namespace/identity");
+import express from "express";
+import crypto from "crypto";
+import { claimNamespace, openNamespace } from "../claim/records.js";
+import { getMemoriesForNamespace } from "../claim/replay.js";
+import { appendSemanticMemory, readSemanticValueForNamespace } from "../claim/memoryStore.js";
+import { seedClaimNamespaceSemantics } from "../claim/claimSemantics.js";
+import { normalizeHttpRequestToMeTarget } from "./meTarget.js";
+import { createEnvelope, createErrorEnvelope } from "./envelope.js";
+import { parseNamespaceIdentityParts } from "../namespace/identity.js";
 function toStableJson(value) {
     if (value === null || typeof value !== "object") {
         return JSON.stringify(value);
@@ -27,21 +20,21 @@ function toStableJson(value) {
     return `{${entries.join(",")}}`;
 }
 function computeProofId(input) {
-    return crypto_1.default
+    return crypto
         .createHash("sha256")
         .update(toStableJson(input))
         .digest("hex");
 }
 function parseNamespaceIdentity(namespace) {
-    return (0, identity_1.parseNamespaceIdentityParts)(namespace);
+    return parseNamespaceIdentityParts(namespace);
 }
-function readOpenedClaimProfile(namespace) {
+export function readOpenedClaimProfile(namespace) {
     const identity = parseNamespaceIdentity(namespace);
-    const username = normalizeUsername((0, memoryStore_1.readSemanticValueForNamespace)(namespace, "profile.username") || identity.username || "");
-    const name = normalizeName((0, memoryStore_1.readSemanticValueForNamespace)(namespace, "profile.name"));
-    const email = normalizeEmail((0, memoryStore_1.readSemanticValueForNamespace)(namespace, "profile.email"));
-    const phone = normalizePhone((0, memoryStore_1.readSemanticValueForNamespace)(namespace, "profile.phone"));
-    const claimedAt = Number((0, memoryStore_1.readSemanticValueForNamespace)(namespace, "auth.claimed_at") || 0);
+    const username = normalizeUsername(readSemanticValueForNamespace(namespace, "profile.username") || identity.username || "");
+    const name = normalizeName(readSemanticValueForNamespace(namespace, "profile.name"));
+    const email = normalizeEmail(readSemanticValueForNamespace(namespace, "profile.email"));
+    const phone = normalizePhone(readSemanticValueForNamespace(namespace, "profile.phone"));
+    const claimedAt = Number(readSemanticValueForNamespace(namespace, "auth.claimed_at") || 0);
     return {
         profile: {
             username,
@@ -104,17 +97,17 @@ function validateClaimProfile(body, namespace) {
         phone,
     };
 }
-function createClaimsRouter() {
-    const router = express_1.default.Router();
+export function createClaimsRouter() {
+    const router = express.Router();
     router.post("/claims", async (req, res) => {
-        const target = (0, meTarget_1.normalizeHttpRequestToMeTarget)(req);
+        const target = normalizeHttpRequestToMeTarget(req);
         const body = req.body ?? {};
         const namespace = String(body.namespace || "");
         const profile = validateClaimProfile(body, namespace);
         if (!profile.ok) {
-            return res.status(400).json((0, envelope_1.createErrorEnvelope)(target, { error: profile.error }));
+            return res.status(400).json(createErrorEnvelope(target, { error: profile.error }));
         }
-        const out = await (0, records_1.claimNamespace)({
+        const out = await claimNamespace({
             namespace,
             secret: String(body.secret || ""),
             identityHash: String(body.identityHash || "").trim(),
@@ -137,10 +130,10 @@ function createClaimsRouter() {
                     : out.error === "PROOF_INVALID"
                         ? 403
                         : 500;
-            return res.status(status).json((0, envelope_1.createErrorEnvelope)(target, { error: out.error }));
+            return res.status(status).json(createErrorEnvelope(target, { error: out.error }));
         }
         const timestamp = Date.now();
-        (0, claimSemantics_1.seedClaimNamespaceSemantics)({
+        seedClaimNamespaceSemantics({
             namespace: out.record.namespace,
             username: profile.username,
             name: profile.name,
@@ -149,7 +142,7 @@ function createClaimsRouter() {
             passwordHash: out.record.identityHash,
             timestamp,
         });
-        return res.status(201).json((0, envelope_1.createEnvelope)(target, {
+        return res.status(201).json(createEnvelope(target, {
             namespace: out.record.namespace,
             identityHash: out.record.identityHash,
             publicKey: out.record.publicKey,
@@ -164,9 +157,9 @@ function createClaimsRouter() {
         }));
     });
     router.post("/claims/open", (req, res) => {
-        const target = (0, meTarget_1.normalizeHttpRequestToMeTarget)(req);
+        const target = normalizeHttpRequestToMeTarget(req);
         const body = req.body ?? {};
-        const out = (0, records_1.openNamespace)({
+        const out = openNamespace({
             namespace: String(body.namespace || ""),
             secret: String(body.secret || ""),
             identityHash: String(body.identityHash || "").trim(),
@@ -181,11 +174,11 @@ function createClaimsRouter() {
                         || out.error === "IDENTITY_HASH_REQUIRED"
                         ? 400
                         : 500;
-            return res.status(status).json((0, envelope_1.createErrorEnvelope)(target, { error: out.error }));
+            return res.status(status).json(createErrorEnvelope(target, { error: out.error }));
         }
-        const memories = (0, replay_1.getMemoriesForNamespace)(out.record.namespace);
+        const memories = getMemoriesForNamespace(out.record.namespace);
         const openedAt = Date.now();
-        (0, memoryStore_1.appendSemanticMemory)({
+        appendSemanticMemory({
             namespace: out.record.namespace,
             path: "session.opened_at",
             operator: "=",
@@ -204,7 +197,7 @@ function createClaimsRouter() {
             }),
             openedAt,
         };
-        return res.json((0, envelope_1.createEnvelope)(target, {
+        return res.json(createEnvelope(target, {
             verified: true,
             reasonCode: null,
             reason: null,

@@ -1,8 +1,4 @@
-"use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
-exports.buildMeTargetNrp = buildMeTargetNrp;
-exports.normalizeHttpRequestToMeTarget = normalizeHttpRequestToMeTarget;
-const namespace_1 = require("./namespace");
+import { formatObserverRelationQuery, resolveNamespace, resolveObserverRelation, resolveTransportHost, } from "./namespace.js";
 function normalizePathSegments(rawPath) {
     const trimmed = String(rawPath || "").replace(/^\/+/, "").replace(/\/+$/, "");
     if (!trimmed)
@@ -33,19 +29,19 @@ function inferNamespace(req) {
     if (hinted)
         return hinted;
     if (operation === "claim" || operation === "open") {
-        return (0, namespace_1.resolveNamespace)(req);
+        return resolveNamespace(req);
     }
-    return (0, namespace_1.resolveNamespace)(req);
+    return resolveNamespace(req);
 }
-function buildMeTargetNrp(namespace, operation, path, relation) {
+export function buildMeTargetNrp(namespace, operation, path, relation) {
     const normalizedPath = path || "_";
-    return `me://${namespace}:${operation}/${normalizedPath}${(0, namespace_1.formatObserverRelationQuery)(relation)}`;
+    return `me://${namespace}:${operation}/${normalizedPath}${formatObserverRelationQuery(relation)}`;
 }
-function normalizeHttpRequestToMeTarget(req) {
-    const host = (0, namespace_1.resolveTransportHost)(req);
+export function normalizeHttpRequestToMeTarget(req) {
+    const host = resolveTransportHost(req);
     const operation = inferOperation(req);
     const namespace = inferNamespace(req);
-    const relation = (0, namespace_1.resolveObserverRelation)(req);
+    const relation = resolveObserverRelation(req);
     const path = operation === "claim" || operation === "open"
         ? ""
         : normalizePathSegments(req.path);
