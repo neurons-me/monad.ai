@@ -109,133 +109,134 @@ function validateClaimProfile(body: Record<string, unknown>, namespace: string) 
   };
 }
 
-export function createClaimsRouter() {
-  const router = express.Router();
+export const claimRequestHandler: express.RequestHandler = async (req, res) => {
+  const target = normalizeHttpRequestToMeTarget(req);
+  const body = req.body ?? {};
+  const namespace = String(body.namespace || "");
+  const profile = validateClaimProfile(body as Record<string, unknown>, namespace);
+  if (!profile.ok) {
+    return res.status(400).json(createErrorEnvelope(target, { error: profile.error }));
+  }
 
-  router.post("/claims", async (req: express.Request, res: express.Response) => {
-    const target = normalizeHttpRequestToMeTarget(req);
-    const body = req.body ?? {};
-    const namespace = String(body.namespace || "");
-    const profile = validateClaimProfile(body as Record<string, unknown>, namespace);
-    if (!profile.ok) {
-      return res.status(400).json(createErrorEnvelope(target, { error: profile.error }));
-    }
+  const out = await claimNamespace({
+    namespace,
+    secret: String(body.secret || ""),
+    identityHash: String(body.identityHash || "").trim(),
+    publicKey: String(body.publicKey || "").trim() || null,
+    privateKey: String(body.privateKey || "").trim() || null,
+    proof: (body.proof && typeof body.proof === "object") ? body.proof : null,
+  });
 
-    const out = await claimNamespace({
-      namespace,
-      secret: String(body.secret || ""),
-      identityHash: String(body.identityHash || "").trim(),
-      publicKey: String(body.publicKey || "").trim() || null,
-      privateKey: String(body.privateKey || "").trim() || null,
-      proof: (body.proof && typeof body.proof === "object") ? body.proof : null,
-    });
+  if (!out.ok) {
+    const status =
+      out.error === "NAMESPACE_TAKEN"
+        ? 409
+        : out.error === "NAMESPACE_REQUIRED"
+            || out.error === "SECRET_REQUIRED"
+            || out.error === "IDENTITY_HASH_REQUIRED"
+            || out.error === "CLAIM_KEY_INVALID"
+            || out.error === "CLAIM_KEYPAIR_MISMATCH"
+            || out.error === "PROOF_MESSAGE_INVALID"
+            || out.error === "PROOF_NAMESPACE_MISMATCH"
+            || out.error === "PROOF_TIMESTAMP_INVALID"
+          ? 400
+          : out.error === "PROOF_INVALID"
+            ? 403
+          : 500;
+    return res.status(status).json(createErrorEnvelope(target, { error: out.error }));
+  }
 
-    if (!out.ok) {
-      const status =
-        out.error === "NAMESPACE_TAKEN"
-          ? 409
-          : out.error === "NAMESPACE_REQUIRED"
-              || out.error === "SECRET_REQUIRED"
-              || out.error === "IDENTITY_HASH_REQUIRED"
-              || out.error === "CLAIM_KEY_INVALID"
-              || out.error === "CLAIM_KEYPAIR_MISMATCH"
-              || out.error === "PROOF_MESSAGE_INVALID"
-              || out.error === "PROOF_NAMESPACE_MISMATCH"
-              || out.error === "PROOF_TIMESTAMP_INVALID"
-            ? 400
-            : out.error === "PROOF_INVALID"
-              ? 403
-            : 500;
-      return res.status(status).json(createErrorEnvelope(target, { error: out.error }));
-    }
+  const timestamp = Date.now();
+  seedClaimNamespaceSemantics({
+    namespace: out.record.namespace,
+    username: profile.username,
+    name: profile.name,
+    email: profile.email,
+    phone: profile.phone,
+    passwordHash: out.record.identityHash,
+    timestamp,
+  });
 
-    const timestamp = Date.now();
-    seedClaimNamespaceSemantics({
-      namespace: out.record.namespace,
+  return res.status(201).json(createEnvelope(target, {
+    namespace: out.record.namespace,
+    identityHash: out.record.identityHash,
+    publicKey: out.record.publicKey,
+    createdAt: out.record.createdAt,
+    profile: {
       username: profile.username,
       name: profile.name,
       email: profile.email,
       phone: profile.phone,
-      passwordHash: out.record.identityHash,
-      timestamp,
-    });
+    },
+    persistentClaim: out.persistentClaim,
+  }));
+};
 
-    return res.status(201).json(createEnvelope(target, {
-      namespace: out.record.namespace,
-      identityHash: out.record.identityHash,
-      publicKey: out.record.publicKey,
-      createdAt: out.record.createdAt,
-      profile: {
-        username: profile.username,
-        name: profile.name,
-        email: profile.email,
-        phone: profile.phone,
-      },
-      persistentClaim: out.persistentClaim,
-    }));
+export const openRequestHandler: express.RequestHandler = (req, res) => {
+  const target = normalizeHttpRequestToMeTarget(req);
+  const body = req.body ?? {};
+  const out = openNamespace({
+    namespace: String(body.namespace || ""),
+    secret: String(body.secret || ""),
+    identityHash: String(body.identityHash || "").trim(),
   });
 
-  router.post("/claims/open", (req: express.Request, res: express.Response) => {
-    const target = normalizeHttpRequestToMeTarget(req);
-    const body = req.body ?? {};
-    const out = openNamespace({
-      namespace: String(body.namespace || ""),
-      secret: String(body.secret || ""),
-      identityHash: String(body.identityHash || "").trim(),
-    });
+  if (!out.ok) {
+    const status =
+      out.error === "CLAIM_NOT_FOUND"
+        ? 404
+        : out.error === "CLAIM_VERIFICATION_FAILED" || out.error === "IDENTITY_MISMATCH"
+          ? 403
+        : out.error === "NAMESPACE_REQUIRED"
+            || out.error === "SECRET_REQUIRED"
+            || out.error === "IDENTITY_HASH_REQUIRED"
+          ? 400
+          : 500;
+    return res.status(status).json(createErrorEnvelope(target, { error: out.error }));
+  }
 
-    if (!out.ok) {
-      const status =
-        out.error === "CLAIM_NOT_FOUND"
-          ? 404
-          : out.error === "CLAIM_VERIFICATION_FAILED" || out.error === "IDENTITY_MISMATCH"
-            ? 403
-          : out.error === "NAMESPACE_REQUIRED"
-              || out.error === "SECRET_REQUIRED"
-              || out.error === "IDENTITY_HASH_REQUIRED"
-              ? 400
-              : 500;
-      return res.status(status).json(createErrorEnvelope(target, { error: out.error }));
-    }
-
-    const memories = getMemoriesForNamespace(out.record.namespace);
-    const openedAt = Date.now();
-    appendSemanticMemory({
-      namespace: out.record.namespace,
-      path: "session.opened_at",
-      operator: "=",
-      data: openedAt,
-      timestamp: openedAt,
-    });
-    const policy = getDefaultReadPolicy(out.record.namespace);
-    const identity = parseNamespaceIdentity(out.record.namespace);
-    const openedClaim = readOpenedClaimProfile(out.record.namespace);
-    const audit = {
-      proofId: computeProofId({
-        namespace: out.record.namespace,
-        identityHash: out.record.identityHash,
-        noise: out.noise,
-        memories,
-      }),
-      openedAt,
-    };
-
-    return res.json(createEnvelope(target, {
-      verified: true,
-      reasonCode: null,
-      reason: null,
-      identity,
-      policy,
-      audit,
+  const memories = getMemoriesForNamespace(out.record.namespace);
+  const openedAt = Date.now();
+  appendSemanticMemory({
+    namespace: out.record.namespace,
+    path: "session.opened_at",
+    operator: "=",
+    data: openedAt,
+    timestamp: openedAt,
+  });
+  const policy = getDefaultReadPolicy(out.record.namespace);
+  const identity = parseNamespaceIdentity(out.record.namespace);
+  const openedClaim = readOpenedClaimProfile(out.record.namespace);
+  const audit = {
+    proofId: computeProofId({
       namespace: out.record.namespace,
       identityHash: out.record.identityHash,
-      createdAt: openedClaim.claimedAt || out.record.createdAt,
-      profile: openedClaim.profile,
       noise: out.noise,
       memories,
-      openedAt,
-    }));
-  });
+    }),
+    openedAt,
+  };
 
+  return res.json(createEnvelope(target, {
+    verified: true,
+    reasonCode: null,
+    reason: null,
+    identity,
+    policy,
+    audit,
+    namespace: out.record.namespace,
+    identityHash: out.record.identityHash,
+    createdAt: openedClaim.claimedAt || out.record.createdAt,
+    profile: openedClaim.profile,
+    noise: out.noise,
+    memories,
+    openedAt,
+  }));
+};
+
+export function createClaimsRouter() {
+  const router = express.Router();
+  router.post("/claims", claimRequestHandler);
+  router.post("/claims/signIn", openRequestHandler);
   return router;
 }

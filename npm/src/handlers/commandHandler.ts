@@ -1,4 +1,5 @@
 import type express from "express";
+import { claimRequestHandler, openRequestHandler } from "../http/claims.js";
 import { claimNamespace, getClaim, openNamespace } from "../claim/records.js";
 import { getMemoriesForNamespace, isNamespaceWriteAuthorized, recordMemory } from "../claim/replay.js";
 import { createEnvelope, createErrorEnvelope } from "../http/envelope.js";
@@ -14,9 +15,7 @@ import {
   getDefaultReadPolicy,
   isCanonicalClaimableNamespace,
   normalizeClaimableNamespace,
-  normalizeOperation,
   parseNamespaceIdentity,
-  resolveCommandNamespace,
 } from "../runtime/commands.js";
 
 function claimStatusCode(error: string): number {
@@ -138,104 +137,57 @@ export const meCommandHandler: express.RequestHandler = async (req, res) => {
   }));
 };
 
-// POST / — universal write surface (write / claim / open by payload.operation)
+// Kernel-level claim: no profile fields required — used by programmatic clients (cleaker client)
+const rootCompatClaimHandler: express.RequestHandler = async (req, res) => {
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const target = normalizeHttpRequestToMeTarget(req);
+  const namespace = normalizeClaimableNamespace(String(body.namespace || ""));
+
+  if (!namespace) {
+    return res.status(400).json(createErrorEnvelope(target, { error: "NAMESPACE_REQUIRED" }));
+  }
+
+  const out = await claimNamespace({
+    namespace,
+    secret: String(body.secret || ""),
+    identityHash: String(body.identityHash || "").trim(),
+    publicKey: String(body.publicKey || "").trim() || null,
+    privateKey: String(body.privateKey || "").trim() || null,
+    proof: (body.proof && typeof body.proof === "object") ? body.proof as any : null,
+  });
+
+  if (!out.ok) {
+    return res.status(claimStatusCode(out.error)).json(createErrorEnvelope(target, { error: out.error }));
+  }
+
+  return res.status(201).json(createEnvelope(target, {
+    namespace: out.record.namespace,
+    identityHash: out.record.identityHash,
+    publicKey: out.record.publicKey,
+    createdAt: out.record.createdAt,
+    persistentClaim: out.persistentClaim,
+  }));
+};
+
+// POST / — compat shim: legacy clients send operation:"claim"/"open" to root
+export const rootCompatHandler: express.RequestHandler = (req, res, next) => {
+  const op = String((req.body as any)?.operation || (req.body as any)?.op || "").trim().toLowerCase();
+  if (op === "claim") return rootCompatClaimHandler(req, res, next);
+  if (op === "open") return openRequestHandler(req, res, next);
+  return next();
+};
+
+// POST / — write surface only; claim/open live at POST /claims and POST /claims/open
 export const rootCommandHandler: express.RequestHandler = async (req, res) => {
   const body = req.body;
   const target = normalizeHttpRequestToMeTarget(req);
-  const rawTarget = String((body as any)?.target || (req.query as any)?.target || "").trim();
-  const parsedTarget = rawTarget ? parseBridgeTarget(rawTarget) : null;
-  const operation = normalizeOperation((body as any)?.operation || (body as any)?.op || parsedTarget?.selector);
-  const resolvedNamespace = resolveCommandNamespace(
-    operation,
-    (body ?? {}) as Record<string, unknown>,
-    parsedTarget,
-    resolveNamespace(req),
-  );
-  const commandTarget =
-    (operation === "claim" || operation === "open") && parsedTarget?.namespace === "kernel"
-      ? buildKernelCommandTarget(req, operation, resolvedNamespace)
-      : null;
 
   if (!body || typeof body !== "object") {
     return res.status(400).json(createErrorEnvelope(target, { error: "Expected JSON block in request body" }));
   }
 
-  if (operation === "claim") {
-    if (commandTarget && !isCanonicalClaimableNamespace(resolvedNamespace)) {
-      return res.status(400).json(createErrorEnvelope(commandTarget, {
-        error: "FULL_NAMESPACE_REQUIRED",
-        detail: "Public claims should use a full namespace such as username.cleaker.me.",
-      }));
-    }
-
-    const out = await claimNamespace({
-      namespace: resolvedNamespace,
-      secret: String((body as any)?.secret || ""),
-      identityHash: String((body as any)?.identityHash || "").trim(),
-      publicKey: String((body as any)?.publicKey || "").trim() || null,
-      privateKey: String((body as any)?.privateKey || "").trim() || null,
-      proof: ((body as any)?.proof && typeof (body as any).proof === "object") ? (body as any).proof : null,
-    });
-
-    const claimTarget = commandTarget || buildNormalizedTarget(req, resolvedNamespace, "claim", "");
-    if (!out.ok) return res.status(claimStatusCode(out.error)).json(createErrorEnvelope(claimTarget, { error: out.error }));
-
-    return res.status(201).json(createEnvelope(claimTarget, {
-      namespace: out.record.namespace,
-      identityHash: out.record.identityHash,
-      publicKey: out.record.publicKey,
-      createdAt: out.record.createdAt,
-      persistentClaim: out.persistentClaim,
-    }));
-  }
-
-  if (operation === "open") {
-    if (commandTarget && !isCanonicalClaimableNamespace(resolvedNamespace)) {
-      return res.status(400).json(createErrorEnvelope(commandTarget, {
-        error: "FULL_NAMESPACE_REQUIRED",
-        detail: "Public opens should use a full namespace such as username.cleaker.me.",
-      }));
-    }
-
-    const out = openNamespace({
-      namespace: resolvedNamespace,
-      secret: String((body as any)?.secret || ""),
-      identityHash: String((body as any)?.identityHash || "").trim(),
-    });
-
-    const openTarget = commandTarget || buildNormalizedTarget(req, resolvedNamespace, "open", "");
-    if (!out.ok) return res.status(openStatusCode(out.error)).json(createErrorEnvelope(openTarget, { error: out.error }));
-
-    const memories = getMemoriesForNamespace(out.record.namespace);
-    const openedAt = Date.now();
-    const audit = {
-      proofId: computeProofId({
-        namespace: out.record.namespace,
-        identityHash: out.record.identityHash,
-        noise: out.noise,
-        memories,
-      }),
-      openedAt,
-    };
-
-    return res.json(createEnvelope(openTarget, {
-      verified: true,
-      reasonCode: null,
-      reason: null,
-      identity: parseNamespaceIdentity(out.record.namespace),
-      policy: getDefaultReadPolicy(out.record.namespace),
-      audit,
-      namespace: out.record.namespace,
-      identityHash: out.record.identityHash,
-      noise: out.noise,
-      memories,
-      openedAt,
-    }));
-  }
-
-  // write path
+  const namespace = resolveNamespace(req);
   const timestamp = Date.now();
-  const namespace = resolvedNamespace;
   const claim = getClaim(namespace);
 
   if (claim) {

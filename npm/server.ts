@@ -19,7 +19,7 @@ import { buildProviderBoot, createProviderSurface, type ProviderSurfaceConfig } 
 import type { NamespaceProviderBoot } from "./src/http/provider.js";
 import { createFetchSurface } from "./src/surfaces/fetchSurface.js";
 import { createBridgeHandler } from "./src/handlers/bridgeHandler.js";
-import { meCommandHandler, rootCommandHandler } from "./src/handlers/commandHandler.js";
+import { meCommandHandler, rootCommandHandler, rootCompatHandler } from "./src/handlers/commandHandler.js";
 import { createLedgerHandlers } from "./src/handlers/ledgerHandler.js";
 import { commitHandler, syncEventsHandler } from "./src/handlers/syncHandler.js";
 
@@ -127,6 +127,7 @@ app.get("/resolve",         bridgeHandler);
 app.post("/me/*",           meCommandHandler);
 app.get("/",                ledger.root);
 app.use(requestLogger());
+app.post("/",               rootCompatHandler);
 app.post("/",               rootCommandHandler);
 app.get("/",                ledger.rootRead);
 app.get("/blocks",          ledger.blocks);
