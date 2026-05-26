@@ -9,7 +9,7 @@ export interface MonadNetGetRegistration {
   stop(): Promise<void>;
 }
 
-type NetGetRegistrationPayload = {
+export type NetGetRegistrationPayload = {
   id: string;
   name: string;
   kind: "monad";
@@ -95,7 +95,7 @@ async function postJson(endpoint: string, payload: unknown, timeoutMs: number): 
   }
 }
 
-function buildExposure(monadName: string) {
+export function buildNetGetMonadExposure(monadName: string) {
   const pathName = normalizeToken(monadName) || "default";
   return {
     enabled: true,
@@ -145,25 +145,26 @@ function buildExposure(monadName: string) {
   };
 }
 
-function buildRegistrationPayload(input: {
+export function buildNetGetMonadRegistrationPayload(input: {
   bootstrap: MonadBootstrapResult;
   id: string;
   startedAt: string;
   heartbeatMs: number;
 }): NetGetRegistrationPayload | null {
   const { config } = input.bootstrap;
+  const env = config.env || process.env;
   const port = Number(config.port);
   if (!Number.isInteger(port) || port <= 0 || port > 65535) return null;
 
   const self = config.selfNodeConfig;
   const monadName = normalizeToken(
-    process.env.MONAD_NAME ||
+    env.MONAD_NAME ||
       self?.monadName ||
       self?.identity ||
       config.localNamespaceRoot ||
       `monad-${port}`,
   ) || `monad-${port}`;
-  const host = normalizeToken(process.env.MONAD_NETGET_HOST) || "127.0.0.1";
+  const host = normalizeToken(env.MONAD_NETGET_HOST) || "127.0.0.1";
   const url = `http://${host}:${port}`;
   const now = new Date().toISOString();
   const capabilities = unique([
@@ -216,7 +217,7 @@ function buildRegistrationPayload(input: {
       hasUserPanel: true,
       defaultPath: "/",
     },
-    exposure: buildExposure(monadName),
+    exposure: buildNetGetMonadExposure(monadName),
     lifecycle: {
       supportsStart: true,
       supportsStop: true,
@@ -257,7 +258,7 @@ export function startNetGetMonadRegistration(
     id,
     endpoint: baseEndpoint,
     async report() {
-      const payload = buildRegistrationPayload({ bootstrap, id, startedAt, heartbeatMs });
+      const payload = buildNetGetMonadRegistrationPayload({ bootstrap, id, startedAt, heartbeatMs });
       if (!payload) return;
       await postJson(reportEndpoint, payload, timeoutMs);
     },
