@@ -4,6 +4,7 @@ import { getKernelStateDir } from "./kernel/manager.js";
 import { setupPersistence } from "./kernel/persist.js";
 import { readMonadIndexEntry, touchSelfMonadLastSeen } from "./kernel/monadIndex.js";
 import { announceToSurface } from "./http/meshAnnounce.js";
+import { startNetGetMonadRegistration } from "./runtime/netgetRegistration.js";
 function resolveLogger(logger) {
     if (logger === false)
         return null;
@@ -71,9 +72,17 @@ export async function startMonad(options = {}) {
         setupPersistence();
     }
     const logger = resolveLogger(options.logger);
+    let netgetRegistration = null;
     const server = app.listen(config.port, () => {
         if (logger)
             printStartupBanner(app.monad, logger);
+        netgetRegistration = startNetGetMonadRegistration(app.monad, logger);
+        if (netgetRegistration && logger) {
+            logger.log(`  - NetGet registry: ${netgetRegistration.endpoint}`);
+        }
+    });
+    server.once("close", () => {
+        void netgetRegistration?.stop();
     });
     const selfMonadId = config.selfNodeConfig?.monadId || process.env.MONAD_ID || "";
     if (selfMonadId) {
