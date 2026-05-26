@@ -1,5 +1,5 @@
 import express from "express";
-import { getMonadStatus, listMonadRecords, normalizeMonadName, readLogTail, readMonadRecord, startMonadProcess, stopMonadProcess, } from "../cli/runtime.js";
+import { deleteMonadProcess, getMonadStatus, listMonadRecords, normalizeMonadName, pauseMonadProcess, readLogTail, readMonadRecord, restartMonadProcess, resumeMonadProcess, startExistingMonadProcess, startMonadProcess, stopMonadProcess, } from "../cli/runtime.js";
 function hostLabel(value) {
     const raw = String(value || "").trim().split(",")[0] || "";
     const withoutProtocol = raw.replace(/^[a-z]+:\/\//i, "");
@@ -56,7 +56,28 @@ function monadsCommandPayload() {
         available: true,
         install: "npm install -g monad.ai",
         start: "monads start",
+        actions: [
+            { name: "list", label: "List", command: "monads list", method: "GET", path: "/__monads", scope: "registry" },
+            { name: "start", label: "Start New", command: "monads start [name]", method: "POST", path: "/__monads/start", scope: "registry" },
+            { name: "on", label: "On", command: "monads on <name>", method: "POST", path: "/__monads/:name/on", scope: "monad" },
+            { name: "resume", label: "Resume", command: "monads resume <name>", method: "POST", path: "/__monads/:name/resume", scope: "monad" },
+            { name: "pause", label: "Pause", command: "monads pause <name>", method: "POST", path: "/__monads/:name/pause", scope: "monad" },
+            { name: "off", label: "Off", command: "monads off <name>", method: "POST", path: "/__monads/:name/off", scope: "monad" },
+            { name: "stop", label: "Stop", command: "monads stop <name>", method: "POST", path: "/__monads/:name/stop", scope: "monad" },
+            { name: "restart", label: "Restart", command: "monads restart <name>", method: "POST", path: "/__monads/:name/restart", scope: "monad" },
+            { name: "delete", label: "Delete", command: "monads delete <name>", method: "POST", path: "/__monads/:name/delete", scope: "monad" },
+            { name: "status", label: "Status", command: "monads status <name>", method: "GET", path: "/__monads/:name/status", scope: "monad" },
+            { name: "logs", label: "Logs", command: "monads logs <name> --tail", method: "GET", path: "/__monads/:name/logs", scope: "monad" },
+            { name: "proxy", label: "Proxy", command: "monads proxy", method: "CLI", path: "", scope: "gateway" },
+        ],
     };
+}
+function readString(...values) {
+    for (const value of values) {
+        if (typeof value === "string" && value.trim())
+            return value.trim();
+    }
+    return undefined;
 }
 function parsePort(value) {
     if (value === undefined || value === null || value === "")
@@ -66,6 +87,17 @@ function parsePort(value) {
         throw new Error("INVALID_PORT");
     }
     return port;
+}
+function parseNamespace(value) {
+    return readString(value);
+}
+function controlActionErrorStatus(error) {
+    const message = error?.message || String(error);
+    if (message === "INVALID_PORT")
+        return 400;
+    if (message.includes("was not found"))
+        return 404;
+    return 409;
 }
 export function createMonadsControlRouter() {
     const router = express.Router();
@@ -83,6 +115,7 @@ export function createMonadsControlRouter() {
             const status = await startMonadProcess({
                 name: typeof req.body?.name === "string" ? req.body.name : undefined,
                 port: parsePort(req.body?.port),
+                namespace: parseNamespace(req.body?.namespace ?? req.body?.rootspace),
             });
             return res.status(201).json({
                 ok: true,
@@ -92,7 +125,107 @@ export function createMonadsControlRouter() {
         }
         catch (error) {
             const message = error?.message || String(error);
-            return res.status(message === "INVALID_PORT" ? 400 : 409).json({ ok: false, error: message });
+            return res.status(controlActionErrorStatus(error)).json({ ok: false, error: message });
+        }
+    });
+    router.post("/__monads/:name/start", async (req, res) => {
+        try {
+            const status = await startExistingMonadProcess(req.params.name, {
+                port: parsePort(req.body?.port),
+                namespace: parseNamespace(req.body?.namespace ?? req.body?.rootspace),
+            });
+            return res.json({ ok: true, command: monadsCommandPayload(), monad: serializeStatus(status) });
+        }
+        catch (error) {
+            return res.status(controlActionErrorStatus(error)).json({ ok: false, error: error?.message || String(error) });
+        }
+    });
+    router.post("/__monads/:name/on", async (req, res) => {
+        try {
+            const status = await resumeMonadProcess(req.params.name, {
+                port: parsePort(req.body?.port),
+                namespace: parseNamespace(req.body?.namespace ?? req.body?.rootspace),
+            });
+            return res.json({ ok: true, command: monadsCommandPayload(), monad: serializeStatus(status) });
+        }
+        catch (error) {
+            return res.status(controlActionErrorStatus(error)).json({ ok: false, error: error?.message || String(error) });
+        }
+    });
+    router.post("/__monads/:name/resume", async (req, res) => {
+        try {
+            const status = await resumeMonadProcess(req.params.name, {
+                port: parsePort(req.body?.port),
+                namespace: parseNamespace(req.body?.namespace ?? req.body?.rootspace),
+            });
+            return res.json({ ok: true, command: monadsCommandPayload(), monad: serializeStatus(status) });
+        }
+        catch (error) {
+            return res.status(controlActionErrorStatus(error)).json({ ok: false, error: error?.message || String(error) });
+        }
+    });
+    router.post("/__monads/:name/pause", async (req, res) => {
+        try {
+            const status = await pauseMonadProcess(req.params.name);
+            return res.json({ ok: true, command: monadsCommandPayload(), monad: serializeStatus(status) });
+        }
+        catch (error) {
+            return res.status(controlActionErrorStatus(error)).json({ ok: false, error: error?.message || String(error) });
+        }
+    });
+    router.post("/__monads/:name/off", async (req, res) => {
+        try {
+            const status = await stopMonadProcess(req.params.name);
+            return res.json({ ok: true, command: monadsCommandPayload(), monad: serializeStatus(status) });
+        }
+        catch (error) {
+            return res.status(controlActionErrorStatus(error)).json({ ok: false, error: error?.message || String(error) });
+        }
+    });
+    router.post("/__monads/:name/restart", async (req, res) => {
+        try {
+            const status = await restartMonadProcess(req.params.name, {
+                port: parsePort(req.body?.port),
+                namespace: parseNamespace(req.body?.namespace ?? req.body?.rootspace),
+            });
+            return res.json({ ok: true, command: monadsCommandPayload(), monad: serializeStatus(status) });
+        }
+        catch (error) {
+            return res.status(controlActionErrorStatus(error)).json({ ok: false, error: error?.message || String(error) });
+        }
+    });
+    router.post("/__monads/:name/delete", async (req, res) => {
+        try {
+            const result = await deleteMonadProcess(req.params.name);
+            return res.json({
+                ok: true,
+                command: monadsCommandPayload(),
+                monad: {
+                    name: result.record.name,
+                    deleted: true,
+                    runtimeDir: result.runtimeDir,
+                },
+            });
+        }
+        catch (error) {
+            return res.status(controlActionErrorStatus(error)).json({ ok: false, error: error?.message || String(error) });
+        }
+    });
+    router.delete("/__monads/:name", async (req, res) => {
+        try {
+            const result = await deleteMonadProcess(req.params.name);
+            return res.json({
+                ok: true,
+                command: monadsCommandPayload(),
+                monad: {
+                    name: result.record.name,
+                    deleted: true,
+                    runtimeDir: result.runtimeDir,
+                },
+            });
+        }
+        catch (error) {
+            return res.status(controlActionErrorStatus(error)).json({ ok: false, error: error?.message || String(error) });
         }
     });
     router.get("/__monads/:name/status", async (req, res) => {

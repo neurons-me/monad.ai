@@ -8,7 +8,7 @@ import { execFile, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { normalizeNamespaceConstant } from "../namespace/identity.js";
 
-export type MonadRecordStatus = "starting" | "running" | "stopped" | "dead";
+export type MonadRecordStatus = "starting" | "running" | "paused" | "stopped" | "dead";
 
 export interface MonadRecord {
   name: string;
@@ -36,6 +36,25 @@ export interface StartMonadCliOptions {
   namespace?: string;
   cwd?: string;
   seed?: string;
+}
+
+export interface ExistingMonadProcessOptions {
+  port?: number;
+  namespace?: string;
+  cwd?: string;
+  seed?: string;
+}
+
+export interface StopMonadProcessOptions {
+  status?: Extract<MonadRecordStatus, "paused" | "stopped">;
+  signal?: NodeJS.Signals;
+  timeoutMs?: number;
+}
+
+export interface DeleteMonadProcessResult {
+  record: MonadRecord;
+  runtimeDir: string;
+  deleted: true;
 }
 
 export interface MonadRuntimeStatus {
@@ -130,6 +149,38 @@ async function readJsonFile<T>(filePath: string): Promise<T | null> {
 async function writeRecord(record: MonadRecord): Promise<void> {
   await ensureDir(record.runtimeDir);
   await fsp.writeFile(getRecordPath(record.name), `${JSON.stringify(record, null, 2)}\n`, "utf8");
+}
+
+function resolveSafeMonadRuntimeDir(name: string): string {
+  const home = path.resolve(getMonadsHome());
+  const runtimeDir = path.resolve(getMonadRuntimeDir(name));
+  const relative = path.relative(home, runtimeDir);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error(`Refusing to delete unsafe Monad runtime directory: ${runtimeDir}`);
+  }
+  return runtimeDir;
+}
+
+async function waitForPidExit(pid: number, timeoutMs: number): Promise<boolean> {
+  const started = Date.now();
+  while (pidAlive(pid) && Date.now() - started < timeoutMs) {
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  return !pidAlive(pid);
+}
+
+async function terminateRecordProcess(input: {
+  record: MonadRecord;
+  signal?: NodeJS.Signals;
+  timeoutMs?: number;
+  forceKill?: boolean;
+}): Promise<boolean> {
+  if (!pidAlive(input.record.pid)) return true;
+  process.kill(input.record.pid, input.signal || "SIGTERM");
+  if (await waitForPidExit(input.record.pid, input.timeoutMs ?? 5000)) return true;
+  if (!input.forceKill) return false;
+  process.kill(input.record.pid, "SIGKILL");
+  return waitForPidExit(input.record.pid, 2000);
 }
 
 function normalizeRecord(record: MonadRecord | null): MonadRecord | null {
@@ -267,11 +318,12 @@ async function waitForHealthy(endpoint: string, timeoutMs = 6000): Promise<boole
 export async function getMonadStatus(record: MonadRecord): Promise<MonadRuntimeStatus> {
   const alive = pidAlive(record.pid);
   if (!alive) {
+    const restingStatus = record.status === "paused" || record.status === "stopped" ? record.status : "dead";
     return {
       record,
       pidAlive: false,
       healthy: false,
-      status: record.status === "stopped" ? "stopped" : "dead",
+      status: restingStatus,
     };
   }
 
@@ -324,8 +376,8 @@ export async function startMonadProcess(options: StartMonadCliOptions = {}): Pro
   }
 
   const runtimeDir = getMonadRuntimeDir(name);
-  const port = await findFreePort(options.port);
-  const namespace = normalizeNamespaceConstant(options.namespace || resolveDefaultRootspace());
+  const port = await findFreePort(options.port ?? existing?.port);
+  const namespace = normalizeNamespaceConstant(options.namespace || existing?.namespace || resolveDefaultRootspace());
   const identity = namespace;
   const surface = name;
   const endpoint = `http://127.0.0.1:${port}`;
@@ -335,7 +387,7 @@ export async function startMonadProcess(options: StartMonadCliOptions = {}): Pro
   const stdoutLog = path.join(runtimeDir, "stdout.log");
   const stderrLog = path.join(runtimeDir, "stderr.log");
   const packageRoot = resolvePackageRoot();
-  const cwd = path.resolve(options.cwd || packageRoot);
+  const cwd = path.resolve(options.cwd || existing?.cwd || packageRoot);
   const now = new Date().toISOString();
   const repoRoot = path.resolve(packageRoot, "../../..");
 
@@ -410,26 +462,87 @@ export async function startMonadProcess(options: StartMonadCliOptions = {}): Pro
   return getMonadStatus(updated);
 }
 
-export async function stopMonadProcess(name: string): Promise<MonadRuntimeStatus> {
+export async function stopMonadProcess(
+  name: string,
+  options: StopMonadProcessOptions = {},
+): Promise<MonadRuntimeStatus> {
   const normalized = normalizeMonadName(name);
   const record = await readMonadRecord(normalized);
   if (!record) throw new Error(`Monad "${normalized}" was not found.`);
 
-  if (pidAlive(record.pid)) {
-    process.kill(record.pid, "SIGTERM");
-    const started = Date.now();
-    while (pidAlive(record.pid) && Date.now() - started < 5000) {
-      await new Promise((resolve) => setTimeout(resolve, 200));
-    }
-  }
+  await terminateRecordProcess({
+    record,
+    signal: options.signal,
+    timeoutMs: options.timeoutMs,
+  });
 
   const updated = {
     ...record,
-    status: "stopped" as const,
+    status: options.status || "stopped" as const,
     updatedAt: new Date().toISOString(),
   };
   await writeRecord(updated);
   return getMonadStatus(updated);
+}
+
+export async function pauseMonadProcess(name: string): Promise<MonadRuntimeStatus> {
+  return stopMonadProcess(name, { status: "paused" });
+}
+
+export async function startExistingMonadProcess(
+  name: string,
+  options: ExistingMonadProcessOptions = {},
+): Promise<MonadRuntimeStatus> {
+  const normalized = normalizeMonadName(name);
+  const existing = await readMonadRecord(normalized);
+  if (!existing) throw new Error(`Monad "${normalized}" was not found.`);
+  return startMonadProcess({
+    name: existing.name,
+    port: options.port ?? existing.port,
+    namespace: options.namespace || existing.namespace,
+    cwd: options.cwd || existing.cwd,
+    seed: options.seed,
+  });
+}
+
+export async function resumeMonadProcess(
+  name: string,
+  options: ExistingMonadProcessOptions = {},
+): Promise<MonadRuntimeStatus> {
+  return startExistingMonadProcess(name, options);
+}
+
+export async function restartMonadProcess(
+  name: string,
+  options: ExistingMonadProcessOptions = {},
+): Promise<MonadRuntimeStatus> {
+  const normalized = normalizeMonadName(name);
+  const existing = await readMonadRecord(normalized);
+  if (!existing) throw new Error(`Monad "${normalized}" was not found.`);
+  const status = await getMonadStatus(existing);
+  if (status.pidAlive) await stopMonadProcess(existing.name);
+  return startMonadProcess({
+    name: existing.name,
+    port: options.port ?? existing.port,
+    namespace: options.namespace || existing.namespace,
+    cwd: options.cwd || existing.cwd,
+    seed: options.seed,
+  });
+}
+
+export async function deleteMonadProcess(name: string): Promise<DeleteMonadProcessResult> {
+  const normalized = normalizeMonadName(name);
+  const record = await readMonadRecord(normalized);
+  if (!record) throw new Error(`Monad "${normalized}" was not found.`);
+
+  const runtimeDir = resolveSafeMonadRuntimeDir(normalized);
+  const stopped = await terminateRecordProcess({ record, forceKill: true });
+  if (!stopped) {
+    throw new Error(`Monad "${normalized}" could not be stopped before delete.`);
+  }
+
+  await fsp.rm(runtimeDir, { recursive: true, force: true });
+  return { record, runtimeDir, deleted: true };
 }
 
 export async function readLogTail(record: MonadRecord, stream: "stdout" | "stderr" = "stdout", lines = 80): Promise<string> {

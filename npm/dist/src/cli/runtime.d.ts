@@ -1,4 +1,4 @@
-export type MonadRecordStatus = "starting" | "running" | "stopped" | "dead";
+export type MonadRecordStatus = "starting" | "running" | "paused" | "stopped" | "dead";
 export interface MonadRecord {
     name: string;
     identity: string;
@@ -25,6 +25,22 @@ export interface StartMonadCliOptions {
     cwd?: string;
     seed?: string;
 }
+export interface ExistingMonadProcessOptions {
+    port?: number;
+    namespace?: string;
+    cwd?: string;
+    seed?: string;
+}
+export interface StopMonadProcessOptions {
+    status?: Extract<MonadRecordStatus, "paused" | "stopped">;
+    signal?: NodeJS.Signals;
+    timeoutMs?: number;
+}
+export interface DeleteMonadProcessResult {
+    record: MonadRecord;
+    runtimeDir: string;
+    deleted: true;
+}
 export interface MonadRuntimeStatus {
     record: MonadRecord;
     pidAlive: boolean;
@@ -47,7 +63,12 @@ export declare function listMonadRecords(): Promise<MonadRecord[]>;
 export declare function listRunningMonads(): Promise<MonadRuntimeStatus[]>;
 export declare function getMonadStatus(record: MonadRecord): Promise<MonadRuntimeStatus>;
 export declare function startMonadProcess(options?: StartMonadCliOptions): Promise<MonadRuntimeStatus>;
-export declare function stopMonadProcess(name: string): Promise<MonadRuntimeStatus>;
+export declare function stopMonadProcess(name: string, options?: StopMonadProcessOptions): Promise<MonadRuntimeStatus>;
+export declare function pauseMonadProcess(name: string): Promise<MonadRuntimeStatus>;
+export declare function startExistingMonadProcess(name: string, options?: ExistingMonadProcessOptions): Promise<MonadRuntimeStatus>;
+export declare function resumeMonadProcess(name: string, options?: ExistingMonadProcessOptions): Promise<MonadRuntimeStatus>;
+export declare function restartMonadProcess(name: string, options?: ExistingMonadProcessOptions): Promise<MonadRuntimeStatus>;
+export declare function deleteMonadProcess(name: string): Promise<DeleteMonadProcessResult>;
 export declare function readLogTail(record: MonadRecord, stream?: "stdout" | "stderr", lines?: number): Promise<string>;
 export interface StartMonadProxyOptions {
     port?: number;

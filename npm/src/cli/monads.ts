@@ -2,13 +2,17 @@
 import { createInterface, type Interface } from "node:readline/promises";
 import { stdin as input, stdout as output } from "node:process";
 import {
+  deleteMonadProcess,
   followMonadLogs,
   getMonadStatus,
   listMonadRecords,
   listRunningMonads,
   normalizeMonadName,
+  pauseMonadProcess,
   readLogTail,
   readMonadRecord,
+  restartMonadProcess,
+  resumeMonadProcess,
   startMonadProcess,
   startMonadProxy,
   stopMonadProcess,
@@ -22,8 +26,14 @@ Usage:
   monads                     Open the Monad control panel
   monads list                List known monads
   monads start [name]        Start a new Monad. Auto-names when name is omitted
+  monads on [name]           Turn on a known Monad, or start one when omitted
+  monads pause <name>        Pause a Monad without forgetting it
+  monads resume <name>       Resume a paused or stopped Monad
+  monads off <name>          Alias for stop
   monads stop <name>         Stop a running Monad
   monads restart <name>      Restart a Monad
+  monads delete <name>       Delete a Monad and its local runtime data
+  monads rm <name>           Alias for delete
   monads status [name]       Show status for one Monad or all known Monads
   monads logs <name>         Stream Monad logs in real time
   monads logs <name> --tail  Show recent Monad logs without following
@@ -41,6 +51,10 @@ function parseOptionValue(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
   if (index < 0) return undefined;
   return args[index + 1];
+}
+
+function parseNamespaceOption(args: string[]): string | undefined {
+  return parseOptionValue(args, "--namespace") || parseOptionValue(args, "--rootspace");
 }
 
 function parsePositionalName(args: string[]): string | undefined {
@@ -78,7 +92,7 @@ async function printRecords(onlyRunning = false): Promise<void> {
 
 async function commandStart(args: string[]): Promise<void> {
   const portValue = parseOptionValue(args, "--port");
-  const namespace = parseOptionValue(args, "--namespace") || parseOptionValue(args, "--rootspace");
+  const namespace = parseNamespaceOption(args);
   const name = parsePositionalName(args);
   const status = await startMonadProcess({
     name,
@@ -101,18 +115,63 @@ async function commandStop(args: string[]): Promise<void> {
   console.log(`Stopped ${status.record.name}`);
 }
 
+async function commandPause(args: string[]): Promise<void> {
+  const name = args[1];
+  if (!name) throw new Error("Usage: monads pause <name>");
+  const status = await pauseMonadProcess(name);
+  console.log(`Paused ${status.record.name}`);
+}
+
+async function commandResume(args: string[]): Promise<void> {
+  const name = args[1];
+  if (!name) throw new Error("Usage: monads resume <name>");
+  const portValue = parseOptionValue(args, "--port");
+  const namespace = parseNamespaceOption(args);
+  const status = await resumeMonadProcess(name, {
+    port: portValue ? Number(portValue) : undefined,
+    namespace,
+  });
+  console.log(`Resumed ${status.record.name} on ${status.record.endpoint}`);
+}
+
+async function commandOn(args: string[]): Promise<void> {
+  const name = parsePositionalName(args);
+  if (!name) {
+    await commandStart(args);
+    return;
+  }
+  const existing = await readMonadRecord(name);
+  if (!existing) {
+    await commandStart(args);
+    return;
+  }
+  await commandResume(["resume", name, ...args.slice(2)]);
+}
+
+async function commandOff(args: string[]): Promise<void> {
+  const name = args[1];
+  if (!name) throw new Error("Usage: monads off <name>");
+  await commandStop(["stop", name]);
+}
+
 async function commandRestart(args: string[]): Promise<void> {
   const name = args[1];
   if (!name) throw new Error("Usage: monads restart <name>");
-  const namespace = parseOptionValue(args, "--namespace") || parseOptionValue(args, "--rootspace");
-  const existing = await readMonadRecord(name);
-  if (existing) await stopMonadProcess(name);
-  const status = await startMonadProcess({
-    name: normalizeMonadName(name),
-    port: existing?.port,
-    namespace: namespace || existing?.namespace,
+  const namespace = parseNamespaceOption(args);
+  const portValue = parseOptionValue(args, "--port");
+  const status = await restartMonadProcess(name, {
+    port: portValue ? Number(portValue) : undefined,
+    namespace,
   });
   console.log(`Restarted ${status.record.name} on ${status.record.endpoint}`);
+}
+
+async function commandDelete(args: string[]): Promise<void> {
+  const name = args[1];
+  if (!name) throw new Error("Usage: monads delete <name>");
+  const result = await deleteMonadProcess(name);
+  console.log(`Deleted ${result.record.name}`);
+  console.log(`  removed: ${result.runtimeDir}`);
 }
 
 async function commandStatus(args: string[]): Promise<void> {
@@ -186,13 +245,17 @@ async function startFromPanel(rl: Interface): Promise<void> {
   console.log(`\nStarted ${status.record.name} in ${status.record.namespace} at ${status.record.endpoint}\n`);
 }
 
-async function chooseKnownMonad(rl: Interface, action: "stop" | "logs" | "status"): Promise<void> {
-  const statuses = action === "status"
-    ? await Promise.all((await listMonadRecords()).map(getMonadStatus))
-    : await listRunningMonads();
+async function chooseKnownMonad(
+  rl: Interface,
+  action: "resume" | "pause" | "stop" | "restart" | "delete" | "logs" | "status",
+): Promise<void> {
+  const needsRunning = action === "pause" || action === "stop";
+  const statuses = needsRunning
+    ? await listRunningMonads()
+    : await Promise.all((await listMonadRecords()).map(getMonadStatus));
 
   if (statuses.length === 0) {
-    console.log(action === "status" ? "No monads have been started yet.\n" : "No running monads.\n");
+    console.log(needsRunning ? "No running monads.\n" : "No monads have been started yet.\n");
     return;
   }
 
@@ -207,7 +270,18 @@ async function chooseKnownMonad(rl: Interface, action: "stop" | "logs" | "status
     return;
   }
 
+  if (action === "resume") await commandResume(["resume", record.name]);
+  if (action === "pause") await commandPause(["pause", record.name]);
   if (action === "stop") await commandStop(["stop", record.name]);
+  if (action === "restart") await commandRestart(["restart", record.name]);
+  if (action === "delete") {
+    const answer = await ask(rl, `Delete ${record.name} and its local runtime data? Type delete to confirm: `);
+    if (answer !== "delete") {
+      console.log("Delete cancelled.\n");
+      return;
+    }
+    await commandDelete(["delete", record.name]);
+  }
   if (action === "logs") {
     console.clear();
     console.log(`Streaming ${record.name} logs`);
@@ -233,9 +307,13 @@ async function openPanel(): Promise<void> {
       await printRecords(true);
       console.log("\n1. Start a New Monad");
       console.log("2. View All Monads");
-      console.log("3. Stop a Monad");
-      console.log("4. View Monad Logs");
-      console.log("5. View Monad Status");
+      console.log("3. On / Resume a Monad");
+      console.log("4. Pause a Monad");
+      console.log("5. Off / Stop a Monad");
+      console.log("6. Restart a Monad");
+      console.log("7. Delete a Monad");
+      console.log("8. View Monad Logs");
+      console.log("9. View Monad Status");
       console.log("0. Exit");
 
       const choice = await ask(rl, "\nChoose an option: ");
@@ -246,12 +324,16 @@ async function openPanel(): Promise<void> {
       else if (choice === "2") {
         await printRecords(false);
         console.log("");
-      } else if (choice === "3") await chooseKnownMonad(rl, "stop");
-      else if (choice === "4") {
+      } else if (choice === "3") await chooseKnownMonad(rl, "resume");
+      else if (choice === "4") await chooseKnownMonad(rl, "pause");
+      else if (choice === "5") await chooseKnownMonad(rl, "stop");
+      else if (choice === "6") await chooseKnownMonad(rl, "restart");
+      else if (choice === "7") await chooseKnownMonad(rl, "delete");
+      else if (choice === "8") {
         await chooseKnownMonad(rl, "logs");
         continue;
       }
-      else if (choice === "5") await chooseKnownMonad(rl, "status");
+      else if (choice === "9") await chooseKnownMonad(rl, "status");
       else console.log("Unknown option.\n");
 
       await ask(rl, "Press Enter to continue...");
@@ -273,8 +355,13 @@ async function main(): Promise<void> {
   if (command === "help" || command === "--help" || command === "-h") printHelp();
   else if (command === "list" || command === "ls") await printRecords(false);
   else if (command === "start") await commandStart(args);
+  else if (command === "on") await commandOn(args);
+  else if (command === "pause") await commandPause(args);
+  else if (command === "resume") await commandResume(args);
+  else if (command === "off") await commandOff(args);
   else if (command === "stop") await commandStop(args);
   else if (command === "restart") await commandRestart(args);
+  else if (command === "delete" || command === "rm") await commandDelete(args);
   else if (command === "status") await commandStatus(args);
   else if (command === "logs") await commandLogs(args);
   else if (command === "proxy") await commandProxy(args);

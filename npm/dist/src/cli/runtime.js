@@ -73,6 +73,33 @@ async function writeRecord(record) {
     await ensureDir(record.runtimeDir);
     await fsp.writeFile(getRecordPath(record.name), `${JSON.stringify(record, null, 2)}\n`, "utf8");
 }
+function resolveSafeMonadRuntimeDir(name) {
+    const home = path.resolve(getMonadsHome());
+    const runtimeDir = path.resolve(getMonadRuntimeDir(name));
+    const relative = path.relative(home, runtimeDir);
+    if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+        throw new Error(`Refusing to delete unsafe Monad runtime directory: ${runtimeDir}`);
+    }
+    return runtimeDir;
+}
+async function waitForPidExit(pid, timeoutMs) {
+    const started = Date.now();
+    while (pidAlive(pid) && Date.now() - started < timeoutMs) {
+        await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    return !pidAlive(pid);
+}
+async function terminateRecordProcess(input) {
+    if (!pidAlive(input.record.pid))
+        return true;
+    process.kill(input.record.pid, input.signal || "SIGTERM");
+    if (await waitForPidExit(input.record.pid, input.timeoutMs ?? 5000))
+        return true;
+    if (!input.forceKill)
+        return false;
+    process.kill(input.record.pid, "SIGKILL");
+    return waitForPidExit(input.record.pid, 2000);
+}
 function normalizeRecord(record) {
     if (!record)
         return null;
@@ -202,11 +229,12 @@ async function waitForHealthy(endpoint, timeoutMs = 6000) {
 export async function getMonadStatus(record) {
     const alive = pidAlive(record.pid);
     if (!alive) {
+        const restingStatus = record.status === "paused" || record.status === "stopped" ? record.status : "dead";
         return {
             record,
             pidAlive: false,
             healthy: false,
-            status: record.status === "stopped" ? "stopped" : "dead",
+            status: restingStatus,
         };
     }
     const listenerPid = await findListeningPid(record.port);
@@ -255,8 +283,8 @@ export async function startMonadProcess(options = {}) {
         throw new Error(`Monad "${name}" is already running on port ${existing.port}.`);
     }
     const runtimeDir = getMonadRuntimeDir(name);
-    const port = await findFreePort(options.port);
-    const namespace = normalizeNamespaceConstant(options.namespace || resolveDefaultRootspace());
+    const port = await findFreePort(options.port ?? existing?.port);
+    const namespace = normalizeNamespaceConstant(options.namespace || existing?.namespace || resolveDefaultRootspace());
     const identity = namespace;
     const surface = name;
     const endpoint = `http://127.0.0.1:${port}`;
@@ -266,7 +294,7 @@ export async function startMonadProcess(options = {}) {
     const stdoutLog = path.join(runtimeDir, "stdout.log");
     const stderrLog = path.join(runtimeDir, "stderr.log");
     const packageRoot = resolvePackageRoot();
-    const cwd = path.resolve(options.cwd || packageRoot);
+    const cwd = path.resolve(options.cwd || existing?.cwd || packageRoot);
     const now = new Date().toISOString();
     const repoRoot = path.resolve(packageRoot, "../../..");
     await ensureDir(runtimeDir);
@@ -335,25 +363,71 @@ export async function startMonadProcess(options = {}) {
     await writeRecord(updated);
     return getMonadStatus(updated);
 }
-export async function stopMonadProcess(name) {
+export async function stopMonadProcess(name, options = {}) {
     const normalized = normalizeMonadName(name);
     const record = await readMonadRecord(normalized);
     if (!record)
         throw new Error(`Monad "${normalized}" was not found.`);
-    if (pidAlive(record.pid)) {
-        process.kill(record.pid, "SIGTERM");
-        const started = Date.now();
-        while (pidAlive(record.pid) && Date.now() - started < 5000) {
-            await new Promise((resolve) => setTimeout(resolve, 200));
-        }
-    }
+    await terminateRecordProcess({
+        record,
+        signal: options.signal,
+        timeoutMs: options.timeoutMs,
+    });
     const updated = {
         ...record,
-        status: "stopped",
+        status: options.status || "stopped",
         updatedAt: new Date().toISOString(),
     };
     await writeRecord(updated);
     return getMonadStatus(updated);
+}
+export async function pauseMonadProcess(name) {
+    return stopMonadProcess(name, { status: "paused" });
+}
+export async function startExistingMonadProcess(name, options = {}) {
+    const normalized = normalizeMonadName(name);
+    const existing = await readMonadRecord(normalized);
+    if (!existing)
+        throw new Error(`Monad "${normalized}" was not found.`);
+    return startMonadProcess({
+        name: existing.name,
+        port: options.port ?? existing.port,
+        namespace: options.namespace || existing.namespace,
+        cwd: options.cwd || existing.cwd,
+        seed: options.seed,
+    });
+}
+export async function resumeMonadProcess(name, options = {}) {
+    return startExistingMonadProcess(name, options);
+}
+export async function restartMonadProcess(name, options = {}) {
+    const normalized = normalizeMonadName(name);
+    const existing = await readMonadRecord(normalized);
+    if (!existing)
+        throw new Error(`Monad "${normalized}" was not found.`);
+    const status = await getMonadStatus(existing);
+    if (status.pidAlive)
+        await stopMonadProcess(existing.name);
+    return startMonadProcess({
+        name: existing.name,
+        port: options.port ?? existing.port,
+        namespace: options.namespace || existing.namespace,
+        cwd: options.cwd || existing.cwd,
+        seed: options.seed,
+    });
+}
+export async function deleteMonadProcess(name) {
+    const normalized = normalizeMonadName(name);
+    const record = await readMonadRecord(normalized);
+    if (!record)
+        throw new Error(`Monad "${normalized}" was not found.`);
+    const runtimeDir = resolveSafeMonadRuntimeDir(normalized);
+    const stopped = await terminateRecordProcess({ record, forceKill: true });
+    if (!stopped) {
+        throw new Error(`Monad "${normalized}" could not be stopped before delete.`);
+    }
+    await fsp.rm(runtimeDir, { recursive: true, force: true });
+    return { record, runtimeDir, deleted: true };
 }
 export async function readLogTail(record, stream = "stdout", lines = 80) {
     const logPath = stream === "stdout" ? record.stdoutLog : record.stderrLog;
