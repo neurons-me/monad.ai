@@ -1,0 +1,1 @@
+import{_ as s,H as e,f as i,i as n}from"./chunks/framework.DDEcApze.js";const k=JSON.parse('{"title":"monad.ai 2.2.0","description":"","frontmatter":{},"headers":[],"relativePath":"index.md","filePath":"index.md"}'),t={name:"index.md"};function o(l,a,p,h,r,d){return e(),i("div",null,[...a[0]||(a[0]=[n("",50)])])}const u=s(t,[["render",o]]);export{k as __pageData,u as default};
