@@ -1,4 +1,4 @@
-import assert from "node:assert/strict";
+import { describe, it, expect } from "vitest";
 import {
   buildNetGetMonadExposure,
   buildNetGetMonadRegistrationPayload,
@@ -44,39 +44,51 @@ function fakeBootstrap(overrides: Partial<MonadBootstrapResult["config"]> = {}):
   };
 }
 
-const exposure = buildNetGetMonadExposure("Files Surface");
-assert.equal(exposure.visibility, "loopback");
-assert.equal(exposure.publishMode, "path");
-assert.deepEqual(exposure.inbound.paths, ["/monads/files-surface"]);
-assert.equal(exposure.auth.requiredForControl, true);
-assert.equal(exposure.auth.requiredForDestructive, true);
+describe("netgetRegistration", () => {
+  describe("buildNetGetMonadExposure", () => {
+    it("builds a loopback exposure with correct defaults", () => {
+      const exposure = buildNetGetMonadExposure("Files Surface");
+      expect(exposure.visibility).toBe("loopback");
+      expect(exposure.publishMode).toBe("path");
+      expect(exposure.inbound.paths).toEqual(["/monads/files-surface"]);
+      expect(exposure.auth.requiredForControl).toBe(true);
+      expect(exposure.auth.requiredForDestructive).toBe(true);
+    });
+  });
 
-const payload = buildNetGetMonadRegistrationPayload({
-  bootstrap: fakeBootstrap(),
-  id: "monad:test",
-  startedAt: "2026-05-26T00:00:00.000Z",
-  heartbeatMs: 3_000,
+  describe("buildNetGetMonadRegistrationPayload", () => {
+    it("builds a valid registration payload from bootstrap", () => {
+      const payload = buildNetGetMonadRegistrationPayload({
+        bootstrap: fakeBootstrap(),
+        id: "monad:test",
+        startedAt: "2026-05-26T00:00:00.000Z",
+        heartbeatMs: 3_000,
+      });
+
+      expect(payload).toBeTruthy();
+      expect(payload!.id).toBe("monad:test");
+      expect(payload!.kind).toBe("monad");
+      expect(payload!.name).toBe("monad:files-surface");
+      expect(payload!.host).toBe("127.0.0.1");
+      expect(payload!.port).toBe(8161);
+      expect(payload!.url).toBe("http://127.0.0.1:8161");
+      expect(payload!.status).toBe("running");
+      expect(payload!.health.state).toBe("healthy");
+      expect(payload!.lifecycle.supportsDelete).toBe(true);
+      expect(payload!.exposure.visibility).toBe("loopback");
+      expect(payload!.metadata.capabilities).toEqual([
+        "control", "events", "gui", "ledger", "mesh", "surface",
+      ]);
+    });
+
+    it("returns null when port is 0 (invalid bootstrap)", () => {
+      const invalid = buildNetGetMonadRegistrationPayload({
+        bootstrap: fakeBootstrap({ port: 0 }),
+        id: "monad:invalid",
+        startedAt: "2026-05-26T00:00:00.000Z",
+        heartbeatMs: 3_000,
+      });
+      expect(invalid).toBeNull();
+    });
+  });
 });
-
-assert.ok(payload);
-assert.equal(payload.id, "monad:test");
-assert.equal(payload.kind, "monad");
-assert.equal(payload.name, "monad:files-surface");
-assert.equal(payload.host, "127.0.0.1");
-assert.equal(payload.port, 8161);
-assert.equal(payload.url, "http://127.0.0.1:8161");
-assert.equal(payload.status, "running");
-assert.equal(payload.health.state, "healthy");
-assert.equal(payload.lifecycle.supportsDelete, true);
-assert.equal(payload.exposure.visibility, "loopback");
-assert.deepEqual(payload.metadata.capabilities, ["control", "events", "gui", "ledger", "mesh", "surface"]);
-
-const invalid = buildNetGetMonadRegistrationPayload({
-  bootstrap: fakeBootstrap({ port: 0 }),
-  id: "monad:invalid",
-  startedAt: "2026-05-26T00:00:00.000Z",
-  heartbeatMs: 3_000,
-});
-assert.equal(invalid, null);
-
-console.log("netgetRegistration ok");
