@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import os from "node:os";
 import type { MonadBootstrapResult, MonadLogger } from "../bootstrap.js";
+import { resolveMeIdentityHash } from "../identity/meIdentity.js";
 
 export interface MonadNetGetRegistration {
   id: string;
@@ -167,6 +168,7 @@ export function buildNetGetMonadRegistrationPayload(input: {
   const host = normalizeToken(env.MONAD_NETGET_HOST) || "127.0.0.1";
   const url = `http://${host}:${port}`;
   const now = new Date().toISOString();
+  const identityHash = resolveMeIdentityHash(env.SEED || env.ME_SEED);
   const capabilities = unique([
     "surface",
     "gui",
@@ -199,6 +201,8 @@ export function buildNetGetMonadRegistrationPayload(input: {
       title: self?.monadName || monadName,
       monadName,
       monadId: self?.monadId,
+      identityHash,
+      identity_hash: identityHash,
       namespace: self?.identity || config.localNamespaceRoot,
       identity: self?.identity,
       endpoint: url,

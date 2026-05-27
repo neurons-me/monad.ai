@@ -1,4 +1,5 @@
 import { listMonadRecords } from "../cli/runtime.js";
+import { normalizeMeIdentityHash, resolveMeIdentityHashFromEnv } from "../identity/meIdentity.js";
 import { getKernel, saveSnapshot } from "./manager.js";
 // Secret space path — encrypted at snapshot/persist time, plain in live memory.
 const INDEX_ROOT = "_.mesh.monads";
@@ -70,12 +71,14 @@ export function seedSelfMonadIndexEntry(config) {
         return;
     const now = Date.now();
     const existing = readMonadIndexEntry(self.monadId);
+    const identityHash = resolveMeIdentityHashFromEnv(config.env) ?? existing?.identity_hash;
     // Include: existing claims + identity + any tags that look like hostnames
     // (tags with a dot or "localhost" are real hostnames, not labels like "primary").
     const tagClaims = (self.tags ?? []).filter((t) => t.includes(".") || t === "localhost");
     const claimed = Array.from(new Set([...(existing?.claimed_namespaces ?? []), self.identity, ...tagClaims].filter(Boolean)));
     writeMonadIndexEntry({
         monad_id: self.monadId,
+        identity_hash: identityHash,
         namespace: self.identity,
         endpoint: self.endpoint,
         name: self.monadName,
@@ -150,6 +153,7 @@ function cliRecordToEntry(r) {
     const ns = normalizeNs(r.namespace || r.identity || "");
     return {
         monad_id: `cli:${r.name}`,
+        identity_hash: normalizeMeIdentityHash(r.identity_hash),
         namespace: ns || r.name,
         endpoint: r.endpoint,
         name: r.name,

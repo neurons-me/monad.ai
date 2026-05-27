@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { execFile, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { resolveMeIdentityHash } from "../identity/meIdentity.js";
 import { normalizeNamespaceConstant } from "../namespace/identity.js";
 const DEFAULT_PORT_START = 8161;
 const DEFAULT_PORT_END = 8999;
@@ -336,6 +337,7 @@ export async function startMonadProcess(options = {}) {
     fs.closeSync(err);
     const record = {
         name,
+        identity_hash: resolveMeIdentityHash(env.SEED),
         identity,
         namespace,
         surface,

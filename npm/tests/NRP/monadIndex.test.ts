@@ -6,6 +6,7 @@
  * itself in the index. Think of it as a phone book for all nodes in the mesh:
  *
  *   monad_id:   unique ID for this node ("frank-m")
+ *   identity_hash: optional `.me` owner identity hash derived from SEED
  *   namespace:  the identity domain this node serves ("suis-macbook-air.local")
  *   endpoint:   the HTTP address to reach this node ("http://localhost:8282")
  *   name:       optional human-readable name ("frank")
@@ -26,6 +27,7 @@
 import fs from "fs";
 import os from "os";
 import path from "path";
+import ME from "this.me";
 import { resetKernelStateForTests } from "../../src/kernel/manager.js";
 import {
   announceClaimedNamespaces,
@@ -33,6 +35,7 @@ import {
   findMonadsForNamespace,
   listMonadIndex,
   readMonadIndexEntry,
+  seedSelfMonadIndexEntry,
   writeMonadIndexEntry,
   type MonadIndexEntry,
 } from "../../src/kernel/monadIndex.js";
@@ -74,6 +77,11 @@ function makeEntry(overrides: Partial<MonadIndexEntry> = {}): MonadIndexEntry {
   };
 }
 
+function meIdentityHash(seed: string): string {
+  const runtime = new (ME as any)(seed);
+  return String((runtime as any)["!"].identity().hash);
+}
+
 // ── 1. write / read ────────────────────────────────────────────────────────────
 
 describe("write / read", () => {
@@ -103,6 +111,57 @@ describe("write / read", () => {
     writeMonadIndexEntry(makeEntry({ name: "v1" }));
     writeMonadIndexEntry(makeEntry({ name: "v2" }));
     expect(readMonadIndexEntry("test-m1")!.name).toBe("v2");
+  });
+});
+
+describe("seedSelfMonadIndexEntry identity link", () => {
+  it("stores the root .me identity_hash derived from SEED", () => {
+    const seed = "nrp-index-owner-link-seed";
+    process.env.SEED = seed;
+
+    seedSelfMonadIndexEntry({
+      env: { SEED: seed } as NodeJS.ProcessEnv,
+      selfNodeConfig: {
+        identity: "suis-macbook-air.local",
+        monadId: "monad:self",
+        monadName: "primary",
+        publicKey: "public-key",
+        tags: ["localhost", "primary"],
+        endpoint: "http://localhost:8161",
+        hostname: "localhost",
+        configPath: "/tmp/self.json",
+        type: "desktop",
+        trust: "owner",
+        resources: ["mesh"],
+      },
+    } as any);
+
+    const entry = readMonadIndexEntry("monad:self");
+    expect(entry?.identity_hash).toBe(meIdentityHash(seed));
+    expect(entry?.identity_hash).toMatch(/^[0-9a-f]{64}$/);
+    expect(entry?.monad_id).toBe("monad:self");
+  });
+
+  it("preserves an existing identity_hash when a legacy config has no seed", () => {
+    const existingHash = meIdentityHash("previous-owner-seed");
+    writeMonadIndexEntry(makeEntry({
+      monad_id: "monad:legacy",
+      identity_hash: existingHash,
+    }));
+
+    seedSelfMonadIndexEntry({
+      env: {} as NodeJS.ProcessEnv,
+      selfNodeConfig: {
+        identity: "legacy.local",
+        monadId: "monad:legacy",
+        tags: ["legacy.local"],
+        endpoint: "http://localhost:8162",
+        hostname: "localhost",
+        configPath: "/tmp/self.json",
+      },
+    } as any);
+
+    expect(readMonadIndexEntry("monad:legacy")?.identity_hash).toBe(existingHash);
   });
 });
 

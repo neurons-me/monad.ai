@@ -1,6 +1,7 @@
 export type MonadRecordStatus = "starting" | "running" | "paused" | "stopped" | "dead";
 export interface MonadRecord {
     name: string;
+    identity_hash?: string;
     identity: string;
     namespace: string;
     surface: string;

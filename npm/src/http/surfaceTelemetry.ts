@@ -45,8 +45,9 @@ export type SurfaceTelemetrySnapshot = {
   };
 };
 
-type SurfaceRequestInput = Omit<SurfaceRequestEvent, "id" | "timestamp"> & {
+type SurfaceRequestInput = Omit<SurfaceRequestEvent, "id" | "timestamp" | "identityHash"> & {
   timestamp?: number;
+  identityHash?: string | null;
 };
 
 type SurfaceStreamClient = {

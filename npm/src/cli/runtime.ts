@@ -6,12 +6,14 @@ import os from "node:os";
 import path from "node:path";
 import { execFile, spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { resolveMeIdentityHash } from "../identity/meIdentity.js";
 import { normalizeNamespaceConstant } from "../namespace/identity.js";
 
 export type MonadRecordStatus = "starting" | "running" | "paused" | "stopped" | "dead";
 
 export interface MonadRecord {
   name: string;
+  identity_hash?: string;
   identity: string;
   namespace: string;
   surface: string;
@@ -433,6 +435,7 @@ export async function startMonadProcess(options: StartMonadCliOptions = {}): Pro
 
   const record: MonadRecord = {
     name,
+    identity_hash: resolveMeIdentityHash(env.SEED),
     identity,
     namespace,
     surface,

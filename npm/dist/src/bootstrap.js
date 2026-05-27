@@ -6,6 +6,7 @@ import { getKernel, getKernelStateDir } from "./kernel/manager.js";
 import { seedSelfMonadIndexEntry } from "./kernel/monadIndex.js";
 import { normalizeNamespaceIdentity, normalizeNamespaceRootName } from "./namespace/identity.js";
 import { loadSelfNodeConfig } from "./http/selfMapping.js";
+import { defaultUsageLedger } from "./resources/usageLedger.js";
 function stringifyList(input) {
     if (Array.isArray(input))
         return input.join(",");
@@ -88,10 +89,17 @@ export async function bootstrapMonad(options = {}) {
     const rebuiltProjectedClaims = rebuildProjectedNamespaceClaims();
     const semanticBootstrapRoot = normalizeNamespaceRootName(config.selfNodeConfig?.identity || config.localNamespaceRoot);
     const seededSemanticBootstrap = ensureRootSemanticBootstrap(semanticBootstrapRoot);
+    // Start the resource usage ledger bridge: from here onwards every surface
+    // request produces a signed ledger entry at surface.usage.requests, and a
+    // window snapshot is flushed to surface.usage.window every 10 s.
+    // The interval is unref'd so it never prevents graceful process exit.
+    const windowMs = Number(process.env.MONAD_USAGE_WINDOW_MS || 10000);
+    defaultUsageLedger.start(windowMs);
     return {
         config,
         kernelStateDir: getKernelStateDir(),
         rebuiltProjectedClaims,
         seededSemanticBootstrap,
+        usageLedgerStarted: defaultUsageLedger.isRunning,
     };
 }

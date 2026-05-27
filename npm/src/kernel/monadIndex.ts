@@ -2,10 +2,13 @@ import type { Memory } from "this.me";
 import type { SelfSurfaceTrust, SelfSurfaceType } from "../http/selfMapping.js";
 import type { MonadRuntimeConfig } from "../bootstrap.js";
 import { listMonadRecords } from "../cli/runtime.js";
+import { normalizeMeIdentityHash, resolveMeIdentityHashFromEnv } from "../identity/meIdentity.js";
 import { getKernel, saveSnapshot } from "./manager.js";
 
 export interface MonadIndexEntry {
   monad_id: string;
+  /** Root `.me` identity hash for ownership/claims. Distinct from mesh routing id. */
+  identity_hash?: string;
   namespace: string;
   endpoint: string;
   name?: string;
@@ -96,6 +99,7 @@ export function seedSelfMonadIndexEntry(config: MonadRuntimeConfig): void {
 
   const now = Date.now();
   const existing = readMonadIndexEntry(self.monadId);
+  const identityHash = resolveMeIdentityHashFromEnv(config.env) ?? existing?.identity_hash;
   // Include: existing claims + identity + any tags that look like hostnames
   // (tags with a dot or "localhost" are real hostnames, not labels like "primary").
   const tagClaims = (self.tags ?? []).filter((t) => t.includes(".") || t === "localhost");
@@ -107,6 +111,7 @@ export function seedSelfMonadIndexEntry(config: MonadRuntimeConfig): void {
   writeMonadIndexEntry(
     {
       monad_id: self.monadId,
+      identity_hash: identityHash,
       namespace: self.identity,
       endpoint: self.endpoint,
       name: self.monadName,
@@ -190,6 +195,7 @@ function cliRecordToEntry(r: Awaited<ReturnType<typeof listMonadRecords>>[number
   const ns = normalizeNs(r.namespace || r.identity || "");
   return {
     monad_id: `cli:${r.name}`,
+    identity_hash: normalizeMeIdentityHash(r.identity_hash),
     namespace: ns || r.name,
     endpoint: r.endpoint,
     name: r.name,

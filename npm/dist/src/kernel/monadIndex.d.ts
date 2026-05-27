@@ -2,6 +2,8 @@ import type { SelfSurfaceTrust, SelfSurfaceType } from "../http/selfMapping.js";
 import type { MonadRuntimeConfig } from "../bootstrap.js";
 export interface MonadIndexEntry {
     monad_id: string;
+    /** Root `.me` identity hash for ownership/claims. Distinct from mesh routing id. */
+    identity_hash?: string;
     namespace: string;
     endpoint: string;
     name?: string;

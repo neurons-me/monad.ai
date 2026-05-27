@@ -160,7 +160,21 @@ export function resolveMonadRuntimeConfig(options: MonadOptions = {}): MonadRunt
 export async function bootstrapMonad(options: MonadOptions = {}): Promise<MonadBootstrapResult> {
   const config = resolveMonadRuntimeConfig(options);
 
-  getKernel();
+  const kernel = getKernel();
+
+  // Declare the monad's identity expression in its own .me kernel.
+  // This aligns with the browser-entry boot pattern: seed is the cryptographic anchor,
+  // @ expression is the human-readable name — two separate concepts.
+  // Only the short name (no dots) is valid for @; the full namespace is composed outside .me.
+  const monadName = config.selfNodeConfig?.monadName ?? process.env.MONAD_NAME;
+  if (monadName && /^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$/i.test(monadName)) {
+    try {
+      (kernel as any)["@"](monadName.toLowerCase());
+    } catch {
+      // @ validation is strict — if the name doesn't pass, skip silently.
+    }
+  }
+
   seedSelfMonadIndexEntry(config);
 
   const rebuiltProjectedClaims = rebuildProjectedNamespaceClaims();

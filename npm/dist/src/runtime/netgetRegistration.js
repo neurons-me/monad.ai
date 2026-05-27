@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import os from "node:os";
+import { resolveMeIdentityHash } from "../identity/meIdentity.js";
 const DEFAULT_NETGET_LOCAL = "http://local.netget";
 const LOCAL_NETGET_HOSTS = new Set(["local.netget", "localhost", "127.0.0.1", "[::1]", "::1"]);
 function normalizeNetGetEndpoint(value) {
@@ -115,6 +116,7 @@ export function buildNetGetMonadRegistrationPayload(input) {
     const host = normalizeToken(env.MONAD_NETGET_HOST) || "127.0.0.1";
     const url = `http://${host}:${port}`;
     const now = new Date().toISOString();
+    const identityHash = resolveMeIdentityHash(env.SEED || env.ME_SEED);
     const capabilities = unique([
         "surface",
         "gui",
@@ -146,6 +148,8 @@ export function buildNetGetMonadRegistrationPayload(input) {
             title: self?.monadName || monadName,
             monadName,
             monadId: self?.monadId,
+            identityHash,
+            identity_hash: identityHash,
             namespace: self?.identity || config.localNamespaceRoot,
             identity: self?.identity,
             endpoint: url,

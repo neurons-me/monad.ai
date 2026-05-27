@@ -49,6 +49,13 @@ export interface MonadBootstrapResult {
     kernelStateDir: string;
     rebuiltProjectedClaims: number;
     seededSemanticBootstrap: number;
+    /**
+     * `true` when the resource usage ledger bridge started successfully.
+     * The ledger is the bridge between surface telemetry and the signed semantic
+     * ledger — it materialises per-request events and window snapshots so
+     * NetGet can aggregate usage and budgets.
+     */
+    usageLedgerStarted: boolean;
 }
 export declare function resolveMonadRuntimeConfig(options?: MonadOptions): MonadRuntimeConfig;
 export declare function bootstrapMonad(options?: MonadOptions): Promise<MonadBootstrapResult>;

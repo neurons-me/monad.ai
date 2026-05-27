@@ -9,6 +9,30 @@ let nextRequestId = 1;
 let nextClientId = 1;
 const recentRequests = [];
 const clients = new Set();
+const requestListeners = [];
+/**
+ * Registers a callback that fires synchronously after every surface request is
+ * recorded.  Returns an unsubscribe function.
+ *
+ * Listeners MUST NOT throw — exceptions are caught and silently discarded so
+ * they can never break request-handling.  Kept in module scope (not per-server)
+ * because `recordSurfaceRequest` is a module-level function.
+ *
+ * @example
+ * ```typescript
+ * const off = addSurfaceRequestListener(event => ledger.record(event));
+ * // later:
+ * off();
+ * ```
+ */
+export function addSurfaceRequestListener(fn) {
+    requestListeners.push(fn);
+    return () => {
+        const i = requestListeners.indexOf(fn);
+        if (i !== -1)
+            requestListeners.splice(i, 1);
+    };
+}
 function clamp01(value) {
     if (!Number.isFinite(value))
         return 0;
@@ -86,6 +110,7 @@ export function recordSurfaceRequest(input) {
         nrp: String(input.nrp || "").trim(),
         lens: String(input.lens || "").trim(),
         forwardedHost: input.forwardedHost ? String(input.forwardedHost).trim() : null,
+        identityHash: input.identityHash ? String(input.identityHash).trim() : null,
     };
     recentRequests.unshift(event);
     if (recentRequests.length > MAX_RECENT_REQUESTS) {
@@ -95,6 +120,14 @@ export function recordSurfaceRequest(input) {
         request: event,
         telemetry: getSurfaceTelemetrySnapshot(),
     });
+    // Notify registered listeners (e.g. ResourceUsageLedger).
+    // Errors are swallowed — listeners must never affect request handling.
+    for (const fn of requestListeners) {
+        try {
+            fn(event);
+        }
+        catch { /* intentionally ignored */ }
+    }
 }
 export function attachSurfaceStreamClient(req, res) {
     const client = {

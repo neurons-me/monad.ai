@@ -57,8 +57,11 @@ function makeApp() {
   return app;
 }
 
+const VALID_IDENTITY_HASH = "a".repeat(64);
+
 const VALID_BODY = {
   monad_id: "monad:abc123",
+  identity_hash: VALID_IDENTITY_HASH,
   name: "frank",
   namespace: "suign.cleaker.me",
   endpoint: "http://raspberry.local:8161",
@@ -86,6 +89,7 @@ describe("POST /.mesh/announce — valid registration", () => {
     expect(entry!.namespace).toBe("suign.cleaker.me");
     expect(entry!.endpoint).toBe("http://raspberry.local:8161");
     expect(entry!.name).toBe("frank");
+    expect(entry!.identity_hash).toBe(VALID_IDENTITY_HASH);
   });
 
   it("stores tags and claimed_namespaces correctly", async () => {

@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import ME from "this.me";
 import {
   buildNetGetMonadExposure,
   buildNetGetMonadRegistrationPayload,
@@ -8,6 +9,7 @@ import type { MonadBootstrapResult } from "../src/bootstrap.js";
 function fakeBootstrap(overrides: Partial<MonadBootstrapResult["config"]> = {}): MonadBootstrapResult {
   const env = {
     MONAD_NAME: "Files Surface",
+    SEED: "netget-registration-owner-seed",
   } as NodeJS.ProcessEnv;
 
   return {
@@ -42,6 +44,11 @@ function fakeBootstrap(overrides: Partial<MonadBootstrapResult["config"]> = {}):
     rebuiltProjectedClaims: 0,
     seededSemanticBootstrap: 0,
   };
+}
+
+function meIdentityHash(seed: string): string {
+  const runtime = new (ME as any)(seed);
+  return String((runtime as any)["!"].identity().hash);
 }
 
 describe("netgetRegistration", () => {
@@ -79,6 +86,8 @@ describe("netgetRegistration", () => {
       expect(payload!.metadata.capabilities).toEqual([
         "control", "events", "gui", "ledger", "mesh", "surface",
       ]);
+      expect(payload!.metadata.identity_hash).toBe(meIdentityHash("netget-registration-owner-seed"));
+      expect(payload!.metadata.identityHash).toBe(payload!.metadata.identity_hash);
     });
 
     it("returns null when port is 0 (invalid bootstrap)", () => {

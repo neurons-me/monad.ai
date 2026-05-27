@@ -1,4 +1,5 @@
 import express from "express";
+import { normalizeMeIdentityHash } from "../identity/meIdentity.js";
 import { writeMonadIndexEntry, type MonadIndexEntry } from "../kernel/monadIndex.js";
 
 // Minimum ms between accepts from the same monad_id — prevents index flooding.
@@ -18,6 +19,7 @@ function parseEntry(body: any, now: number): MonadIndexEntry | null {
 
   return {
     monad_id,
+    identity_hash: normalizeMeIdentityHash(body?.identity_hash),
     namespace,
     endpoint,
     name: String(body?.name || "").trim() || undefined,
