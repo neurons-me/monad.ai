@@ -40,13 +40,14 @@ function printStartupBanner(bootstrap, logger) {
     logger.log("  - Claim namespace: POST /claims");
     logger.log("  - Sign in:         POST /claims/signIn");
     logger.log("  - Kernel claim:    POST /me/kernel:claim/<full-namespace>");
-    logger.log("\n🌐 Namespace Addressing");
-    logger.log("  - cleaker.me                  -> rootspace common ground");
-    logger.log("  - username.cleaker.me         -> personal namespace mounted in rootspace");
+    logger.log("\n🌐 Namespace Addressing  (local-first — domain is just addressing)");
+    logger.log(`  - ${config.localNamespaceRoot.padEnd(30)}-> rootspace (this surface)`);
+    logger.log(`  - username.${config.localNamespaceRoot.padEnd(19)}-> personal namespace mounted here`);
     logger.log(`  - localhost                   -> ${config.localNamespaceRoot}`);
     logger.log(`  - username.localhost          -> username.${config.localNamespaceRoot}`);
-    logger.log("  - cleaker.me/@username        -> username.cleaker.me");
     logger.log(`  - localhost/@username         -> username.${config.localNamespaceRoot}`);
+    logger.log("  (public domain — optional, routes to same surface when DNS points here)");
+    logger.log("  - cleaker.me / neurons.me / <your-domain>  -> same namespace, public address");
     if (config.selfNodeConfig) {
         logger.log("\n🪞 Self Mapping");
         logger.log(`  - Identity:       ${config.selfNodeConfig.identity}`);

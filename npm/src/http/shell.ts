@@ -42,10 +42,16 @@ export function wantsHtml(req: express.Request) {
 
 export function htmlShell(options: { providerBoot?: NamespaceProviderBoot | null } = {}) {
   const providerBoot = options.providerBoot || null;
+  // Title = the namespace being served.
+  // The domain (cleaker.me, neurons.me, etc.) is just addressing — the namespace is the truth.
+  // Locally: suis-macbook-air.local. Publicly: whatever domain resolves here.
+  const namespaceTitle = providerBoot?.namespace || "namespace";
   const indexPath = getMonadIndexPath();
   try {
     if (fs.existsSync(indexPath)) {
-      const html = fs.readFileSync(indexPath, "utf8");
+      let html = fs.readFileSync(indexPath, "utf8");
+      // Replace any hardcoded title with the actual serving namespace
+      html = html.replace(/<title>[^<]*<\/title>/, `<title>${namespaceTitle}</title>`);
       return providerBoot ? injectNamespaceProviderShell(html, providerBoot) : html;
     }
   } catch {
@@ -60,7 +66,7 @@ export function htmlShell(options: { providerBoot?: NamespaceProviderBoot | null
     <script src="/vendor/react-dom/react-dom.production.min.js"></script>
     <link rel="icon" href="/gui/favicon.ico" />
     <link rel="stylesheet" href="/gui/styles.css" />
-    <title>cleaker.me</title>
+    <title>${namespaceTitle}</title>
   </head>
   <body>
     <div id="app"></div>
