@@ -6,6 +6,7 @@ import { getKernel, getKernelStateDir } from "./kernel/manager.js";
 import { seedSelfMonadIndexEntry } from "./kernel/monadIndex.js";
 import { normalizeNamespaceIdentity, normalizeNamespaceRootName } from "./namespace/identity.js";
 import { loadSelfNodeConfig, type SelfNodeConfig } from "./http/selfMapping.js";
+import { defaultUsageLedger } from "./resources/usageLedger.js";
 
 export type MonadLogger = Pick<Console, "log" | "warn" | "error">;
 
@@ -60,6 +61,13 @@ export interface MonadBootstrapResult {
   kernelStateDir: string;
   rebuiltProjectedClaims: number;
   seededSemanticBootstrap: number;
+  /**
+   * `true` when the resource usage ledger bridge started successfully.
+   * The ledger is the bridge between surface telemetry and the signed semantic
+   * ledger — it materialises per-request events and window snapshots so
+   * NetGet can aggregate usage and budgets.
+   */
+  usageLedgerStarted: boolean;
 }
 
 function stringifyList(input: string | string[] | undefined): string | undefined {
@@ -161,10 +169,18 @@ export async function bootstrapMonad(options: MonadOptions = {}): Promise<MonadB
   );
   const seededSemanticBootstrap = ensureRootSemanticBootstrap(semanticBootstrapRoot);
 
+  // Start the resource usage ledger bridge: from here onwards every surface
+  // request produces a signed ledger entry at surface.usage.requests, and a
+  // window snapshot is flushed to surface.usage.window every 10 s.
+  // The interval is unref'd so it never prevents graceful process exit.
+  const windowMs = Number(process.env.MONAD_USAGE_WINDOW_MS || 10_000);
+  defaultUsageLedger.start(windowMs);
+
   return {
     config,
     kernelStateDir: getKernelStateDir(),
     rebuiltProjectedClaims,
     seededSemanticBootstrap,
+    usageLedgerStarted: defaultUsageLedger.isRunning,
   };
 }

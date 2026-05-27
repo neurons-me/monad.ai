@@ -14,6 +14,8 @@ export type SurfaceRequestEvent = {
   nrp: string;
   lens: string;
   forwardedHost: string | null;
+  /** Ed25519 identity hash of the authenticated caller, when available. */
+  identityHash: string | null;
 };
 
 export type SurfaceTelemetrySnapshot = {
@@ -63,6 +65,36 @@ let nextRequestId = 1;
 let nextClientId = 1;
 const recentRequests: SurfaceRequestEvent[] = [];
 const clients = new Set<SurfaceStreamClient>();
+
+// ---------------------------------------------------------------------------
+// Per-request listener registry
+// ---------------------------------------------------------------------------
+
+type SurfaceRequestListener = (event: SurfaceRequestEvent) => void;
+const requestListeners: SurfaceRequestListener[] = [];
+
+/**
+ * Registers a callback that fires synchronously after every surface request is
+ * recorded.  Returns an unsubscribe function.
+ *
+ * Listeners MUST NOT throw — exceptions are caught and silently discarded so
+ * they can never break request-handling.  Kept in module scope (not per-server)
+ * because `recordSurfaceRequest` is a module-level function.
+ *
+ * @example
+ * ```typescript
+ * const off = addSurfaceRequestListener(event => ledger.record(event));
+ * // later:
+ * off();
+ * ```
+ */
+export function addSurfaceRequestListener(fn: SurfaceRequestListener): () => void {
+  requestListeners.push(fn);
+  return () => {
+    const i = requestListeners.indexOf(fn);
+    if (i !== -1) requestListeners.splice(i, 1);
+  };
+}
 
 function clamp01(value: number) {
   if (!Number.isFinite(value)) return 0;
@@ -146,6 +178,7 @@ export function recordSurfaceRequest(input: SurfaceRequestInput) {
     nrp: String(input.nrp || "").trim(),
     lens: String(input.lens || "").trim(),
     forwardedHost: input.forwardedHost ? String(input.forwardedHost).trim() : null,
+    identityHash: input.identityHash ? String(input.identityHash).trim() : null,
   };
 
   recentRequests.unshift(event);
@@ -157,6 +190,12 @@ export function recordSurfaceRequest(input: SurfaceRequestInput) {
     request: event,
     telemetry: getSurfaceTelemetrySnapshot(),
   });
+
+  // Notify registered listeners (e.g. ResourceUsageLedger).
+  // Errors are swallowed — listeners must never affect request handling.
+  for (const fn of requestListeners) {
+    try { fn(event); } catch { /* intentionally ignored */ }
+  }
 }
 
 export function attachSurfaceStreamClient(req: express.Request, res: express.Response) {
