@@ -160,17 +160,32 @@ async function findFreePort(preferred) {
     }
     throw new Error(`No free Monad port found in ${DEFAULT_PORT_START}-${DEFAULT_PORT_END}`);
 }
-function resolveServerEntry() {
+function resolveServerEntry(devMode = false) {
     const here = path.dirname(fileURLToPath(import.meta.url));
-    const candidates = [
-        path.resolve(here, "../../server.js"),
-        path.resolve(here, "../../server.ts"),
-        path.resolve(here, "../../../server.ts"),
-    ];
+    // In dev mode prefer the TypeScript source so tsx --watch picks up changes.
+    const candidates = devMode
+        ? [
+            path.resolve(here, "../../../server.ts"), // monorepo source (most useful)
+            path.resolve(here, "../../server.ts"), // packaged .ts fallback
+            path.resolve(here, "../../server.js"), // compiled fallback
+        ]
+        : [
+            path.resolve(here, "../../server.js"),
+            path.resolve(here, "../../server.ts"),
+            path.resolve(here, "../../../server.ts"),
+        ];
     const found = candidates.find((candidate) => fs.existsSync(candidate));
     if (!found)
         throw new Error("Could not locate monad.ai server entry.");
     return found;
+}
+function resolveTsxBin(packageRoot) {
+    const candidates = [
+        path.resolve(packageRoot, "node_modules/.bin/tsx"),
+        path.resolve(packageRoot, "../node_modules/.bin/tsx"),
+        path.resolve(packageRoot, "../../node_modules/.bin/tsx"),
+    ];
+    return candidates.find((p) => fs.existsSync(p));
 }
 function resolvePackageRoot() {
     const here = path.dirname(fileURLToPath(import.meta.url));
@@ -249,13 +264,17 @@ export async function getMonadStatus(record) {
         };
     }
     if (typeof listenerPid === "number" && listenerPid !== record.pid) {
-        return {
-            record,
-            pidAlive: true,
-            healthy: false,
-            status: "dead",
-            error: `Port ${record.port} is owned by PID ${listenerPid}, not PID ${record.pid}.`,
-        };
+        // In dev mode tsx watch forks a child process that owns the port.
+        // The recorded PID is the tsx watcher (parent); that's still alive — treat as running.
+        if (!record.dev) {
+            return {
+                record,
+                pidAlive: true,
+                healthy: false,
+                status: "dead",
+                error: `Port ${record.port} is owned by PID ${listenerPid}, not PID ${record.pid}.`,
+            };
+        }
     }
     try {
         const surface = await requestJson(`${record.endpoint}/__surface`, 1000);
@@ -326,7 +345,18 @@ export async function startMonadProcess(options = {}) {
         LOCAL_REACT_UMD_DIR: existingPath(repoRoot, "packages/GUI/npm/node_modules/react/umd"),
         LOCAL_REACTDOM_UMD_DIR: existingPath(repoRoot, "packages/GUI/npm/node_modules/react-dom/umd"),
     };
-    const child = spawn(process.execPath, [resolveServerEntry()], {
+    const devMode = options.dev === true;
+    const entry = resolveServerEntry(devMode);
+    const usesTsx = devMode && entry.endsWith(".ts");
+    const tsxBin = usesTsx ? resolveTsxBin(packageRoot) : undefined;
+    if (devMode && !tsxBin) {
+        // tsx not found — warn and fall back to compiled entry
+        const compiledEntry = resolveServerEntry(false);
+        process.stderr.write(`[monads] --dev: tsx not found under ${packageRoot}; falling back to ${compiledEntry}\n`);
+    }
+    const execBin = usesTsx && tsxBin ? tsxBin : process.execPath;
+    const execArgs = usesTsx && tsxBin ? ["watch", entry] : [entry];
+    const child = spawn(execBin, execArgs, {
         cwd,
         env,
         detached: true,
@@ -354,9 +384,11 @@ export async function startMonadProcess(options = {}) {
         selfConfigPath,
         stdoutLog,
         stderrLog,
+        ...(devMode ? { dev: true } : {}),
     };
     await writeRecord(record);
-    const healthy = await waitForHealthy(endpoint);
+    // tsx needs extra time to compile TypeScript on first boot — give it more headroom.
+    const healthy = await waitForHealthy(endpoint, devMode ? 20000 : 6000);
     const updated = {
         ...record,
         status: healthy ? "running" : "starting",
@@ -397,6 +429,7 @@ export async function startExistingMonadProcess(name, options = {}) {
         namespace: options.namespace || existing.namespace,
         cwd: options.cwd || existing.cwd,
         seed: options.seed,
+        dev: existing.dev,
     });
 }
 export async function resumeMonadProcess(name, options = {}) {
@@ -416,6 +449,7 @@ export async function restartMonadProcess(name, options = {}) {
         namespace: options.namespace || existing.namespace,
         cwd: options.cwd || existing.cwd,
         seed: options.seed,
+        dev: existing.dev,
     });
 }
 export async function deleteMonadProcess(name) {

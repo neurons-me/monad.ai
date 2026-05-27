@@ -9,6 +9,7 @@ Usage:
   monads                     Open the Monad control panel
   monads list                List known monads
   monads start [name]        Start a new Monad. Auto-names when name is omitted
+  monads start [name] --dev  Hot-reload mode: watches source .ts files via tsx
   monads on [name]           Turn on a known Monad, or start one when omitted
   monads pause <name>        Pause a Monad without forgetting it
   monads resume <name>       Resume a paused or stopped Monad
@@ -27,6 +28,7 @@ Options:
   --port <port>              Request a specific port
   --namespace <rootspace>    Rootspace/host namespace. Port is never part of it
   --rootspace <rootspace>    Alias for --namespace
+  --dev                      Hot-reload mode (tsx watch). Saves in record; restart inherits it
 `);
 }
 function parseOptionValue(args, name) {
@@ -53,8 +55,9 @@ function parsePositionalName(args) {
 }
 function formatStatus(status) {
     const mark = status.status === "running" ? "online" : status.status;
+    const devTag = status.record.dev ? " [dev]" : "";
     const detail = status.error ? `  (${status.error})` : "";
-    return `${status.record.name.padEnd(18)} ${String(status.record.port).padEnd(6)} ${mark.padEnd(9)} ${status.record.namespace}${detail}`;
+    return `${status.record.name.padEnd(18)} ${String(status.record.port).padEnd(6)} ${mark.padEnd(9)} ${status.record.namespace}${devTag}${detail}`;
 }
 async function printRecords(onlyRunning = false) {
     const statuses = onlyRunning
@@ -73,17 +76,19 @@ async function commandStart(args) {
     const portValue = parseOptionValue(args, "--port");
     const namespace = parseNamespaceOption(args);
     const name = parsePositionalName(args);
+    const dev = args.includes("--dev");
     const status = await startMonadProcess({
         name,
         port: portValue ? Number(portValue) : undefined,
         namespace,
+        dev,
     });
-    console.log(`Started ${status.record.name}`);
+    console.log(`Started ${status.record.name}${status.record.dev ? " [dev]" : ""}`);
     console.log(`  namespace:${status.record.namespace}`);
     console.log(`  surface:  ${status.record.surface}`);
     console.log(`  endpoint: ${status.record.endpoint}`);
     console.log(`  pid:      ${status.record.pid}`);
-    console.log(`  status:   ${status.status}`);
+    console.log(`  status:   ${status.status}${status.record.dev ? "  (tsx watch — hot reload)" : ""}`);
 }
 async function commandStop(args) {
     const name = args[1];

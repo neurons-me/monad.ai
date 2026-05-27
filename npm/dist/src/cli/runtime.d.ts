@@ -18,6 +18,8 @@ export interface MonadRecord {
     selfConfigPath: string;
     stdoutLog: string;
     stderrLog: string;
+    /** True when the monad was started with --dev (tsx watch) */
+    dev?: boolean;
 }
 export interface StartMonadCliOptions {
     name?: string;
@@ -25,6 +27,8 @@ export interface StartMonadCliOptions {
     namespace?: string;
     cwd?: string;
     seed?: string;
+    /** Launch with `tsx watch` (source .ts) instead of compiled dist/server.js */
+    dev?: boolean;
 }
 export interface ExistingMonadProcessOptions {
     port?: number;
