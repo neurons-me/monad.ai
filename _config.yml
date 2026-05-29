@@ -14,14 +14,24 @@ kramdown:
   parse_block_html: true
   hard_wrap: false
 
+exclude:
+  - Typescript/node_modules
+  - Typescript/dist
+  - Typescript/src
+  - Typescript/tests
+  - Typescript/scripts
+  - node_modules
+  - "*/node_modules"
+  - vendor
+
 me_theme:
   brand: monad
   nav:
     - label: Home
       url: https://neurons-me.github.io/
-    - label: All.This
-      url: https://neurons-me.github.io/all.this/
+    - label: Docs
+      relative_url: /docs/
     - label: NPM
       url: https://www.npmjs.com/package/monad.ai
     - label: TypeDocs
-      relative_url: /npm/typedocs/
+      relative_url: /Typescript/typedocs/
