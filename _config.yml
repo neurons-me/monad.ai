@@ -26,6 +26,7 @@ exclude:
 
 me_theme:
   brand: monad
+  favicon: "https://res.cloudinary.com/dkwnxf6gm/image/upload/v1760629064/neurons.me_b50f6a.png"
   nav:
     - label: Home
       url: https://neurons-me.github.io/
