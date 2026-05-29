@@ -1,3 +1,8 @@
+---
+layout: readme
+title: Notes — monad
+---
+
 ### **Namespace**:
 Canonical resource grammar:
 `me://namespace[selector]/path`
