@@ -29,9 +29,7 @@ me_theme:
   nav:
     - label: Home
       url: https://neurons-me.github.io/
-    - label: Docs
-      relative_url: /docs/
-    - label: NPM
-      url: https://www.npmjs.com/package/monad.ai
-    - label: TypeDocs
-      relative_url: /Typescript/typedocs/
+    - label: Github
+      url: https://github.com/neurons-me
+    - label: All.This
+      url: https://neurons-me.github.io/all.this/
