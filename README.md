@@ -16,7 +16,7 @@
 </picture>
 
 # monad
-### Serve `me://Everything.is.just.a.hash.of.a.knowledge.unit`
+### `me://Everything.is.just.a.hash.of.a.knowledge.unit`
 .me.human ↔ .me.monad
 > A federated semantic compute runtime
 
