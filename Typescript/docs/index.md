@@ -1,3 +1,8 @@
+---
+layout: readme
+title: monad.ai — Docs
+---
+
 # monad.ai `2.2.0`
 
 > Active execution agents inside semantic namespaces.

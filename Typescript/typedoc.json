@@ -5,5 +5,7 @@
   "hostedBaseUrl": "https://neurons-me.github.io/monad/Typescript/docs/api/",
   "excludePrivate": true,
   "excludeInternal": true,
-  "readme": "none"
+  "readme": "none",
+  "plugin": [],
+  "skipErrorChecking": true
 }
