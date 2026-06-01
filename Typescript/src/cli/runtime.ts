@@ -426,7 +426,11 @@ export async function startMonadProcess(options: StartMonadCliOptions = {}): Pro
   const env = {
     ...process.env,
     PORT: String(port),
-    SEED: options.seed || process.env.SEED || process.env.ME_SEED || `monad-local:${name}`,
+    // Fallback seed is anchored to the namespace, not the monad instance name.
+    // Two monads serving the same namespace must share the same SEED so they
+    // can read each other's kernel state. The instance name (haiku, iphone…)
+    // belongs in MONAD_NAME, never in the namespace authority key.
+    SEED: options.seed || process.env.SEED || process.env.ME_SEED || `monad-local:${namespace}`,
     ME_NAMESPACE: namespace,
     ME_STATE_DIR: stateDir,
     MONAD_CLAIM_DIR: claimDir,
@@ -663,7 +667,10 @@ export interface StartMonadProxyOptions {
 
 function buildPacFile(proxyPort: number): string {
   return `function FindProxyForURL(url, host) {
-  if (dnsDomainIs(host, ".monad") || host === "local.monad") {
+  // .monad  → monad instances by name (haiku.monad, iphone.monad, …)
+  // .netget → netget admin/control plane by hostname (suis-macbook-air.netget, …)
+  if (dnsDomainIs(host, ".monad") || host === "local.monad" ||
+      dnsDomainIs(host, ".netget") || host === "local.netget") {
     return "PROXY 127.0.0.1:${proxyPort}";
   }
   return "DIRECT";
