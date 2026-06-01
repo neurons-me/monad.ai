@@ -1,6 +1,6 @@
 {
   "name": "monad.ai",
-  "version": "2.2.1",
+  "version": "2.2.2",
   "description": "Monad daemon for identity, ledger, and semantic runtime surfaces.",
   "author": "suiGn",
   "license": "ISC",
@@ -36,10 +36,10 @@
     "docs:publish": "npm run docs:api && npm run docs:build && mkdir -p typedocs && touch typedocs/.nojekyll"
   },
   "dependencies": {
-    "cleaker": "workspace:*",
+    "cleaker": "^3.2.1",
     "cors": "^2.8.5",
     "express": "^4.21.1",
-    "this.me": "workspace:*"
+    "this.me": "^3.9.1"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
